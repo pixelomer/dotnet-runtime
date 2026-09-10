@@ -298,6 +298,12 @@ else()
 set(llvm_runtime_sources)
 endif()
 
+if(HOST_LIBNX AND ENABLE_LLVM_RUNTIME AND NOT MONO_CROSS_COMPILE)
+  # The libnx toolchain disables C++ exceptions globally. These LLVM runtime
+  # helpers implement a C++ exception boundary even in a static AOT runtime.
+  set_source_files_properties(llvm-runtime.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
+endif()
+
 if(TARGET_BROWSER AND MONO_CROSS_COMPILE)
 set(profiler_sources ../profiler/browser.c)
 else()

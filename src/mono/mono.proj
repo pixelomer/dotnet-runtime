@@ -6,6 +6,7 @@
       - MonoEnableLLVM - enable LLVM
       - MonoLLVMDir - [optional] the directory where LLVM is located
       - MonoAOTEnableLLVM - enable LLVM for an AOT-only Mono
+      - MonoEnableLLVMRuntime - accept LLVM AOT code without linking the LLVM compiler
       - MonoVerboseBuild - enable verbose build
       - MonoThreadSuspend - coop,hybrid,preemptive - default thread suspend mode
       - WasmEnableThreads - build runtime with threading support for wasm
@@ -578,6 +579,9 @@ JS_ENGINES = [NODE_JS]
       <_MonoCFLAGS Condition="'$(WasmEnableThreads)' == 'true'" Include="-D_GNU_SOURCE=1" />
       <_MonoCXXFLAGS Condition="'$(WasmEnableThreads)' == 'true'" Include="-pthread"/>
       <_MonoCXXFLAGS Condition="'$(WasmEnableThreads)' == 'true'" Include="-D_GNU_SOURCE=1" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(MonoEnableLLVMRuntime)' == 'true'">
+      <_MonoCMakeArgs Include="-DENABLE_LLVM_RUNTIME=1"/>
     </ItemGroup>
     <!-- Browser specific options -->
     <ItemGroup Condition="'$(TargetsBrowser)' == 'true'">
