@@ -31,3 +31,16 @@ reflection-disabled assemblies together. Other framework DLLs still come from
 the pinned official ILC package. The supported root list here is `sdmc:/`,
 `romfs:/` and `/`; the [filesystem probe](tests/filesystem/README.md) covers a
 subset of filesystem operations, not networking or arbitrary device roots.
+
+The socket probe additionally requires the source-built Horizon
+System.Net.Sockets assembly in ILC's reference list, selected exclusively.
+The polling engine depends on the native event-buffer and close-on-exec
+handling in this fork; replacing the NativeAOT SDK assemblies alone does
+not select every platform BCL implementation.
+
+Applications using full globalization must load `icudt77l.dat` with
+`udata_setCommonData` before managed entry and retain that storage until
+process exit. Linking ICU archives alone does not provide the data.
+Even formatting an endpoint in a socket exception can initialize CultureInfo.
+See the [networking probe](tests/networking/README.md) for initialization and
+source socket assembly instructions.

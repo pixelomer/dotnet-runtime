@@ -10,8 +10,7 @@ The official Unix assembly requires event ports unavailable on Horizon.
 ## Build the socket assembly
 
 From the runtime root, build the required reference projects and socket library.
-The following uses an isolated output pack rather than an unexplained local
-reference-library installation:
+The following builds an isolated reference pack from source:
 
 ```bash
 (
@@ -68,3 +67,19 @@ The Horizon poll engine uses native SocketEvent-sized buffers, clears reused
 entries and reads the registration cookie with Volatile.Read. Diagnostic
 formatting is excluded from Release builds. This probe does not cover arbitrary
 close/reuse races, async operations, DNS, IPv6, TLS, HTTP or external connectivity.
+
+## Native initialization
+
+The launcher loads `icudt77l.dat` from RomFS, calls `udata_setCommonData`
+before managed entry and retains the data until process exit. ICU archives
+alone do not provide this data; formatting a socket error can initialize
+globalization too. The native build defines `U_DISABLE_RENAMING=1` for the
+unversioned ICU symbols and includes NACP alongside RomFS. It checks the NRO
+asset header and RomFS bounds after conversion.
+
+The launcher captures native stdout and stderr alongside its managed progress
+log. BSD services remain initialized until process exit because the polling
+engine owns a background thread. The native socket layer skips unsupported
+close-on-exec operations on Horizon; it does not provide exec inheritance.
+
+Connect and accept are blocking; the send/receive timeouts do not bound them.
