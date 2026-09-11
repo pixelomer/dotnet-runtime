@@ -19,11 +19,16 @@ namespace System.Net.Sockets
             1024;
 #endif
 
+#if DEBUG
         private static bool Logging;
+#endif
+        [Conditional("DEBUG")]
         private static void Log(string str)
         {
+#if DEBUG
             if (Logging)
                 Console.WriteLine(str);
+#endif
         }
 
         // Socket continuations are dispatched to the ThreadPool from the event thread.
@@ -212,7 +217,7 @@ namespace System.Net.Sockets
                     {
                         // Poll until we have events to process or the pool cookie changes.
                         uint triggered = 0;
-                        while (cookie == _poolCookie)
+                        while (cookie == Volatile.Read(ref _poolCookie))
                         {
                             Log($"SocketAyncEngine: doing poll with {events.Length} sockets");
                             triggered = 0;
@@ -248,6 +253,7 @@ namespace System.Net.Sockets
                         if ((short)e.TriggeredEvents != 0 && _handleToContextMap.ContainsKey(e.FileDescriptor))
                         {
                             Log($"SocketAyncEngine: Socket {e.FileDescriptor} triggered event {e.TriggeredEvents}");
+                            handler.Buffer[populatedEvents] = default;
                             handler.Buffer[populatedEvents].Data = e.FileDescriptor;
                             if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLIN)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Read;
                             if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLOUT)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Write;

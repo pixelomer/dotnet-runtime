@@ -3199,7 +3199,13 @@ static int32_t WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32
 }
 
 #else
+#if defined(TARGET_LIBNX)
+// The managed Horizon poll engine fills SocketEvent entries directly even
+// though this platform has no native epoll/kqueue event port.
+static const size_t SocketEventBufferElementSize = sizeof(SocketEvent);
+#else
 static const size_t SocketEventBufferElementSize = 0;
+#endif
 
 static SocketEvents GetSocketEvents(int16_t filter, uint16_t flags)
 {
