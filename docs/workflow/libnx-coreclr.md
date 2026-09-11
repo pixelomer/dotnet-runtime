@@ -173,3 +173,22 @@ fail explicitly.
 The [exception probe](../../src/coreclr/pal/tests/libnx/exceptions/README.md)
 exercises native read faults, nested dispatch and context restoration. It does
 not initialize managed CoreCLR or implement managed GC activation.
+
+## Resident native modules
+
+The native module adapter retains PAL module management and describes the
+resident NRO using its segment/BSS header, loader-supplied executable path and
+System V dynamic symbol/hash metadata. Hosts must retain intended exports at
+link time. Hidden, TLS and undefined symbols are not resolved. Lookup errors
+are thread-local and consumable; releasing a lookup reference does not unload
+the resident NRO. Loading external native modules is unsupported.
+
+PAL_CopyModuleData validates the whole destination extent before copying native
+segments and BSS. The adapter uses section-bound __code_start and hidden
+PC-relative declarations for linker metadata, not an ordinary GOT reference to
+the absolute __start__ symbol. The copied executable path lives until process
+exit. libnx service declarations in the shared minipal thread header use C linkage.
+
+See the [module probe](../../src/coreclr/pal/tests/libnx/modules/README.md)
+for source prerequisites, exported-symbol lookup and bounded snapshot checks.
+Dynamic managed IL loading is a separate runtime contract.
