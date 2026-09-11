@@ -32,6 +32,8 @@ int main()
     f=fopen("sdmc:/switch/nativeaot-networking-test.txt","a");
     if(!f) return 1;
     fprintf(f,"END result=%d\n",result); fclose(f);
-    socketExit();
+    // The managed socket engine owns a background poll thread for process life.
+    // Keep BSD services alive until application exit; do not tear them down
+    // while that thread can still be polling or waking from its idle sleep.
     return result;
 }

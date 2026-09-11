@@ -7,13 +7,14 @@ static class Networking
 {
     [DllImport("__Internal")] static extern void ProbeReport(int phase,long value);
     [DllImport("__Internal")] static extern void ProbeError([MarshalAs(UnmanagedType.LPUTF8Str)] string error);
-    static int checks;
+    static int checks, operation;
     static void Check(bool ok) { if(!ok) throw new Exception("Network assertion failed"); checks++; }
     static Socket Create(SocketType type, ProtocolType protocol)
     {
+        operation=1;
         var socket = new Socket(AddressFamily.InterNetwork, type, protocol);
-        socket.ReceiveTimeout = 2000;
-        socket.SendTimeout = 2000;
+        operation=2;socket.ReceiveTimeout = 2000;
+        operation=3;socket.SendTimeout = 2000;
         return socket;
     }
     static void SendAll(Socket socket, byte[] data)
@@ -35,30 +36,30 @@ static class Networking
     static void Tcp(byte[] expected,byte[] actual)
     {
         using var listener=Create(SocketType.Stream,ProtocolType.Tcp);
-        listener.Bind(new IPEndPoint(IPAddress.Loopback,0));
-        listener.Listen(1);
-        var endpoint=(IPEndPoint)listener.LocalEndPoint!;
+        operation=11;listener.Bind(new IPEndPoint(IPAddress.Loopback,0));
+        operation=12;listener.Listen(1);
+        operation=13;var endpoint=(IPEndPoint)listener.LocalEndPoint!;
         Check(endpoint.Address.Equals(IPAddress.Loopback) && endpoint.Port>0);
         using var client=Create(SocketType.Stream,ProtocolType.Tcp);
-        client.NoDelay=true;
+        operation=14;client.NoDelay=true;
         Check(client.NoDelay);
-        client.Connect(endpoint);
-        using var server=listener.Accept();
-        server.ReceiveTimeout=2000;server.SendTimeout=2000;
+        operation=15;client.Connect(endpoint);
+        operation=16;using var server=listener.Accept();
+        operation=17;server.ReceiveTimeout=2000;server.SendTimeout=2000;
         Check(((IPEndPoint)server.RemoteEndPoint!).Address.Equals(IPAddress.Loopback));
-        SendAll(client,expected);ReceiveAll(server,actual);
+        operation=18;SendAll(client,expected);ReceiveAll(server,actual);
         Check(actual.AsSpan().SequenceEqual(expected));
-        SendAll(server,actual);Array.Clear(actual);ReceiveAll(client,actual);
+        operation=19;SendAll(server,actual);Array.Clear(actual);ReceiveAll(client,actual);
         Check(actual.AsSpan().SequenceEqual(expected));
-        client.Shutdown(SocketShutdown.Send);
+        operation=20;client.Shutdown(SocketShutdown.Send);
         Check(server.Receive(actual,0,1,SocketFlags.None)==0);
     }
     static void Udp(byte[] expected,byte[] actual)
     {
         using var receiver=Create(SocketType.Dgram,ProtocolType.Udp);
         using var sender=Create(SocketType.Dgram,ProtocolType.Udp);
-        receiver.Bind(new IPEndPoint(IPAddress.Loopback,0));
-        sender.Bind(new IPEndPoint(IPAddress.Loopback,0));
+        operation=21;receiver.Bind(new IPEndPoint(IPAddress.Loopback,0));
+        operation=22;sender.Bind(new IPEndPoint(IPAddress.Loopback,0));
         Check(sender.SendTo(expected,0,1024,SocketFlags.None,receiver.LocalEndPoint!)==1024);
         EndPoint from=new IPEndPoint(IPAddress.Any,0);
         int n=receiver.ReceiveFrom(actual,ref from);
@@ -85,6 +86,11 @@ static class Networking
             }
             ProbeReport(1,checks);
             return 0;
-        } catch(Exception ex) { ProbeReport(99,phase);ProbeError(ex.ToString());return 1; }
+        } catch(Exception ex) {
+            ProbeReport(99,phase);ProbeReport(98,operation);ProbeReport(97,ex.HResult);
+            ProbeError(ex.GetType().FullName ?? "unknown exception");
+            if(ex is SocketException socket) ProbeReport(96,(int)socket.SocketErrorCode);
+            return 1;
+        }
     }
 }
