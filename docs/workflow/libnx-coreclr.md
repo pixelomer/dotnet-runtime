@@ -192,3 +192,22 @@ exit. libnx service declarations in the shared minipal thread header use C linka
 See the [module probe](../../src/coreclr/pal/tests/libnx/modules/README.md)
 for source prerequisites, exported-symbol lookup and bounded snapshot checks.
 Dynamic managed IL loading is a separate runtime contract.
+
+## PAL startup and synchronization
+
+PAL initialization retains the object manager, synchronization worker, thread
+startup handshake and resume semaphore. Horizon worker commands use an embedded
+mutex/condition-variable byte channel with bounded backpressure, monotonic
+timeouts, FIFO order and drain-before-EOF closure. Shutdown parking blocks on a
+native condition variable.
+
+svcGetProcessId supplies the checked process identity. Unix session IDs remain
+unavailable; foreign-process handles, monitoring and subprocess creation fail
+explicitly. minipal_getexepath resolves the homebrew loader's executable path
+and supplies it to the resident-module adapter.
+
+The [startup probe](../../src/coreclr/pal/tests/libnx/startup/README.md) exercises
+PAL_InitializeCoreCLR/PAL_Shutdown, suspended-thread startup, single-resume
+semantics, PAL events, retained exit records, kernel identities and the command
+channel. PAL shutdown retains its process-lifetime contract; this is not managed
+runtime initialization or an unload/restart interface.
