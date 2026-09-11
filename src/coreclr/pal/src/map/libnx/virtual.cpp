@@ -190,6 +190,7 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
         case PAGE_NOACCESS: permission = Perm_None; break;
         case PAGE_READONLY: permission = Perm_R; break;
         case PAGE_READWRITE: permission = Perm_Rw; break;
+        case PAGE_EXECUTE_READ: permission = Perm_Rx; break;
         default: SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
     }
     Lock lock;
@@ -221,7 +222,8 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     }
     // Existing permissions are real success. For other mapped memory ask the kernel; do not
     // emulate NOACCESS by decommit (which must discard the old contents).
-    int nativeProtection = protect == PAGE_READWRITE ? MapRead | MapWrite : protect == PAGE_READONLY ? MapRead : MapNone;
+    int nativeProtection = protect == PAGE_READWRITE ? MapRead | MapWrite :
+        protect == PAGE_EXECUTE_READ ? MapRead | MapExecute : protect == PAGE_READONLY ? MapRead : MapNone;
     if (!same && NativeProtect(reinterpret_cast<void*>(start), bytes, nativeProtection) != 0 &&
         R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission)))
     {

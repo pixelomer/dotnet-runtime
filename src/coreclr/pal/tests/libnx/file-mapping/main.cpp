@@ -55,6 +55,14 @@ static void* worker(void*) {
         check(zeros, "tail page zero padding");
         check(!VirtualProtect(tail, 4096, PAGE_READWRITE, &old), "read-only shared snapshot cannot become writable");
         check(NativeUnmap(tail, 53) == 0, "unmap non-page length");
+        auto code = static_cast<unsigned char*>(NativeMap(nullptr, 4096, MapRead, MapPrivate, fd, 0));
+        check(code != MapFailed, "private executable section backing");
+        check(VirtualProtect(code, 4096, PAGE_READWRITE, &old), "writable relocation phase");
+        const uint32_t words[] = {0xd2800540, 0xd65f03c0}; // MOVZ X0,#42; RET
+        memcpy(code, words, sizeof(words));
+        check(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &old) && old == PAGE_READWRITE, "PAL executable section protection and cache publication");
+        check(permission(code) == Perm_Rx && reinterpret_cast<uint64_t(*)()>(code)() == 42, "execute privately relocated section");
+        check(NativeUnmap(code, 4096) == 0, "retire executable section");
         auto small = static_cast<unsigned char*>(NativeMap(nullptr, 1, MapRead, MapPrivate, fd, 0));
         check(small != MapFailed && memcmp(small, pattern, 4096) == 0, "whole last page reflects file bytes");
         check(NativeUnmap(small, 1) == 0, "retire small view");

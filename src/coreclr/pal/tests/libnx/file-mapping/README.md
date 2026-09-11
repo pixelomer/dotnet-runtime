@@ -29,7 +29,7 @@ newlib pread bridge to libnx fsdevPread. It creates only its own pattern file at
 `/switch/coreclr-filemap-probe.bin` and logs to `/switch/coreclr-filemap-probe.txt`.
 It performs 1,024 cycles over 32 threads: section placement into a reserved
 image, guard holes, partial backing retirement, private edits/protection,
-no-access restoration, final-page loading/zero padding, invalid/unsupported
+no-access restoration, private section RW-to-RX execution, final-page loading/zero padding, invalid/unsupported
 requests, and cleanup of images which failed before recording a section. It
 checks that positional reads preserve the descriptor's initial position and
 that private writes never change the input file. NRO/ELF/map are generated in
