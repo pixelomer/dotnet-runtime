@@ -13,7 +13,9 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#if HAVE_LINUX_RTNETLINK_H
 #include <sys/uio.h>
+#endif
 #include <unistd.h>
 #if HAVE_LINUX_RTNETLINK_H
 #include <linux/rtnetlink.h>

@@ -55,6 +55,14 @@ void SystemNative_SetDelayedSigChildConsoleConfigurationHandler(void (*callback)
     assert_msg(false, "Not supported on WASI", 0);
 }
 
+int32_t SystemNative_GetPlatformSignalNumber(PosixSignal signal)
+{
+    // This backend has no POSIX signal delivery. Zero is the documented
+    // result for a signal without a valid native platform number.
+    (void)signal;
+    return 0;
+}
+
 int32_t SystemNative_EnablePosixSignalHandling(int signalCode)
 {
     return false;

@@ -95,7 +95,8 @@ else()
     endif()
 endif()
 
-if (NOT CLR_CMAKE_TARGET_BROWSER AND NOT CLR_CMAKE_TARGET_WASI AND NOT CLR_CMAKE_TARGET_LIBNX)
+if (NOT CLR_CMAKE_TARGET_BROWSER AND NOT CLR_CMAKE_TARGET_WASI)
+    # Horizon exposes the BSD route headers; native socket failures propagate.
     list (APPEND NATIVE_SOURCES pal_networkchange.c)
 endif ()
 

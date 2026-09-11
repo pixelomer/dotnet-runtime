@@ -204,8 +204,8 @@ target_link_libraries(coreclr_static PUBLIC ${CORECLR_LIBRARIES} cee_wks_core ${
 target_compile_definitions(coreclr_static PUBLIC CORECLR_EMBEDDED)
 
 if(CLR_CMAKE_TARGET_LIBNX)
-    # Embedded hosts need the JIT's GC map encoder and bundled-image inflater.
-    target_link_libraries(coreclr_static PUBLIC gcinfo System.IO.Compression.Native-Static)
+    # Embedded hosts need the native BCL, JIT GC map encoder and image inflater.
+    target_link_libraries(coreclr_static PUBLIC gcinfo System.IO.Compression.Native-Static System.Native-Static)
 endif()
 
 

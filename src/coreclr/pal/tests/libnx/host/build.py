@@ -11,7 +11,10 @@ ICU_NX_INSTALL_DIR to the source-built ICU installation. From the runtime root:
     python3 src/coreclr/pal/tests/libnx/host/build.py
 
 The repository build bootstraps its pinned SDK. The host helper links native
-archives and compiles Probe.cs against the target CoreLib from this checkout.
+archives and compiles the selected Probe.cs or Stress.cs against the target
+CoreLib from this checkout. Use --probe stress for the managed worker workload;
+--probe basic is the default. --jit-trace removes the existing
+sdmc:/switch/coreclr-jit-disasm.txt before writing buffered disassembly.
 Copy artifacts/libnx-coreclr-host/managed to /switch/coreclr-probe on the SD
 card, preserving any existing files there. Logs under /switch are overwritten.
 """
@@ -27,6 +30,8 @@ source = Path(__file__).resolve().parent
 repo = source.parents[5]
 parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
+parser.add_argument('--jit-trace', action='store_true')
+parser.add_argument('--probe', choices=['basic', 'stress'], default='basic')
 args = parser.parse_args()
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
@@ -46,6 +51,8 @@ for line in (build / 'CMakeCache.txt').read_text().splitlines():
 output = repo / 'artifacts/libnx-coreclr-host'
 output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS'] + ['-I' + str(repo/'src/coreclr/hosts/inc')]
+if args.jit_trace:
+    compile_flags += ["-DHOST_JIT_TRACE"]
 objects = []
 for unit in [source / 'main.cpp', source / 'trace.cpp']:
     obj = output / (unit.stem + '.o')
@@ -61,6 +68,7 @@ archives = [
     'shared_minipal/libminipal.a',
     'nativeresources/libnativeresourcestring.a',
     'libs-native/System.Globalization.Native/libSystem.Globalization.Native.a',
+    'libs-native/System.Native/libSystem.Native.a',
     'libs-native/System.IO.Compression.Native/libSystem.IO.Compression.Native.a',
     '_deps/fetchzlibng-build/libz.a',
 ]
@@ -86,5 +94,5 @@ managed = output / 'managed'; managed.mkdir(exist_ok=True)
 shutil.copyfile(corelib, managed / corelib.name)
 sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
 subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
-                '-nologo', '-noconfig', '-nostdlib+', '-target:exe', '-optimize+',
-                '-r:' + str(corelib), '-out:' + str(managed/'Probe.dll'), str(source/'Probe.cs')], check=True)
+                '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
+                '-r:' + str(corelib), '-out:' + str(managed/'Probe.dll'), str(source/('Stress.cs' if args.probe == 'stress' else 'Probe.cs'))], check=True)

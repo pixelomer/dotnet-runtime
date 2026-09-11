@@ -16,7 +16,7 @@ python3 src/coreclr/pal/tests/libnx/host/build.py
 
 The source build bootstraps the SDK pinned in global.json. The helper uses
 native Release flags, the staged LIBNX_ROOT from CMakeCache, and the explicitly
-selected ICU archives. It compiles Probe.cs against this checkout's target
+selected ICU archives. It compiles the selected probe against this checkout's target
 CoreLib with that SDK's C# compiler. Outputs under
 `artifacts/libnx-coreclr-host` include NRO, ELF, map and the managed directory.
 

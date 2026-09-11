@@ -11,6 +11,9 @@
 #include "pinvokeoverride.h"
 
 extern "C" const void* GlobalizationResolveDllImport(const char* name);
+#ifdef TARGET_LIBNX
+extern "C" const void* SystemResolveDllImport(const char* name);
+#endif
 
 namespace
 {
@@ -32,6 +35,14 @@ static const void* DefaultResolveDllImport(const char* libraryName, const char* 
         return GlobalizationResolveDllImport(entrypointName);
     }
 
+#ifdef TARGET_LIBNX
+    // Horizon embeds the native BCL in the resident NRO. Use its upstream
+    // export table, just as the always-static globalization shim does above.
+    if (strcmp(libraryName, "libSystem.Native") == 0)
+    {
+        return SystemResolveDllImport(entrypointName);
+    }
+#endif
     return nullptr;
 }
 

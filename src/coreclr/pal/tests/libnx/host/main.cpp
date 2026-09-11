@@ -19,6 +19,8 @@ extern "C" void HostFileTrace(const uint16_t* path, void* result, unsigned error
     text[length] = 0;
     if (output) fprintf(output, "CreateFile path=%s result=%p error=%u\n", text, result, error);
 }
+extern "C" void HostManagedProgress(int phase, int value) { if (output) fprintf(output, "MANAGED phase=%d value=%d\n", phase, value); }
+extern "C" void HostFlushDiagnostics() { fflush(nullptr); }
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
 int main(int argc, char** argv)
 {
@@ -34,6 +36,13 @@ int main(int argc, char** argv)
     // The filesystem FIFO debugger transport is explicitly unsupported.
     // Exercise ordinary runtime startup with the upstream opt-out setting.
     setenv("DOTNET_EnableDiagnostics_Debugger", "0", 1);
+#ifdef HOST_JIT_TRACE
+    remove("sdmc:/switch/coreclr-jit-disasm.txt");
+    setenv("DOTNET_JitStdOutFile", "sdmc:/switch/coreclr-jit-disasm.txt", 1);
+    setenv("DOTNET_JitDisasm", "*", 1);
+    setenv("DOTNET_JitDisasmSummary", "1", 1);
+    setenv("DOTNET_JitDisasmWithCodeBytes", "1", 1);
+#endif
     coreclr_set_error_writer(error_writer);
     void* host = nullptr;
     unsigned domain = 0;
@@ -44,12 +53,16 @@ int main(int argc, char** argv)
     if (result < 0) HostDumpStackMap();
     if (result >= 0) {
         unsigned exit_code = 0;
-        result = coreclr_execute_assembly(host, domain, 0, nullptr, "/switch/coreclr-probe/Probe.dll", &exit_code);
+        char reporter[32];
+        snprintf(reporter, sizeof(reporter), "%llu", (unsigned long long)reinterpret_cast<uintptr_t>(HostManagedProgress));
+        const char* arguments[] = {reporter};
+        result = coreclr_execute_assembly(host, domain, 1, arguments, "/switch/coreclr-probe/Probe.dll", &exit_code);
         fprintf(output, "coreclr_execute_assembly result=%08x exit=%u\n", result, exit_code);
         int latched_exit = 0;
         result = coreclr_shutdown_2(host, domain, &latched_exit);
         fprintf(output, "coreclr_shutdown result=%08x exit=%d\n", result, latched_exit);
     }
     fclose(output);
+    output = nullptr;
     return result < 0;
 }

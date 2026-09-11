@@ -69,9 +69,11 @@ extern "C" int PALAPI __wrap_WideCharToMultiByte(UINT page, DWORD flags, LPCWSTR
 extern "C" void __real_abort() __attribute__((noreturn));
 extern "C" void __real_exit(int) __attribute__((noreturn));
 extern "C" void __real__exit(int) __attribute__((noreturn));
+extern "C" void HostFlushDiagnostics();
 static void TraceTermination(const char* operation, int code)
 {
     char text[180];
+    HostFlushDiagnostics();
     snprintf(text, sizeof(text), "%s code=%d", operation, code);
     LibnxRuntimeDiagnostic(text);
     uintptr_t* frame = static_cast<uintptr_t*>(__builtin_frame_address(0));
