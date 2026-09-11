@@ -79,8 +79,11 @@ static class Networking
             byte[] expected=new byte[16384],actual=new byte[16384];
             for(int round=0;round<32;round++) {
                 for(int i=0;i<expected.Length;i++) expected[i]=(byte)(i*37+round);
+                ProbeReport(200+round,checks);
                 phase=10;Tcp(expected,actual);
+                ProbeReport(300+round,checks);
                 phase=20;Udp(expected,actual);
+                ProbeReport(400+round,checks);
                 GC.Collect();GC.WaitForPendingFinalizers();GC.Collect();
                 ProbeReport(100+round,checks);
             }

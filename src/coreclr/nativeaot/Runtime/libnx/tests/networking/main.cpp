@@ -22,6 +22,10 @@ void ProbeError(const char* error) { LibnxRuntimeDiagnostic(error); }
 }
 int main()
 {
+    if (!freopen("sdmc:/switch/nativeaot-networking-stdout.txt", "w", stdout) ||
+        !freopen("sdmc:/switch/nativeaot-networking-stderr.txt", "w", stderr)) return 1;
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
     FILE* f=fopen("sdmc:/switch/nativeaot-networking-test.txt","w");
     if(!f) return 1;
     fprintf(f,"BEGIN NativeAOT Horizon managed networking\n"); fclose(f);
