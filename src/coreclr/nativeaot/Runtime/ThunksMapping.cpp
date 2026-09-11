@@ -290,6 +290,25 @@ EXTERN_C void* QCALLTYPE RhAllocateThunksMapping()
 extern "C" uintptr_t g_pThunkStubData;
 uintptr_t g_pThunkStubData = NULL;
 
+#ifdef TARGET_LIBNX
+// NRO code and data are separate, loader-mapped RX and RW sections. The finite
+// pool uses the normal managed thunk free list; no executable heap is needed.
+extern "C" uint8_t LibnxThunkCode[], LibnxThunkData[];
+FCIMPL0(int, RhpGetThunkBlockCount) { return 64; } FCIMPLEND
+FCIMPL0(int, RhpGetNumThunkBlocksPerMapping) { return 8; } FCIMPLEND
+FCIMPL0(int, RhpGetNumThunksPerBlock) { return 255; } FCIMPLEND
+FCIMPL0(int, RhpGetThunkSize) { return 16; } FCIMPLEND
+FCIMPL0(int, RhpGetThunkBlockSize) { return 4096; } FCIMPLEND
+FCIMPL1(void*, RhpGetThunkDataBlockAddress, void* addr)
+{
+    return LibnxThunkData + (((uintptr_t)addr & ~(uintptr_t)4095) - (uintptr_t)LibnxThunkCode);
+} FCIMPLEND
+FCIMPL1(void*, RhpGetThunkStubsBlockAddress, void* addr)
+{
+    return LibnxThunkCode + (((uintptr_t)addr & ~(uintptr_t)4095) - (uintptr_t)LibnxThunkData);
+} FCIMPLEND
+#endif
+
 FCDECL0(int, RhpGetThunkBlockCount);
 FCDECL0(int, RhpGetNumThunkBlocksPerMapping);
 FCDECL0(int, RhpGetThunkBlockSize);
@@ -316,6 +335,9 @@ EXTERN_C void* QCALLTYPE RhAllocateThunksMapping()
 
     if (g_pThunkStubData == NULL)
     {
+#ifdef TARGET_LIBNX
+        g_pThunkStubData = (uintptr_t)LibnxThunkData;
+#else
         int thunkDataSize = thunkDataMappingSize * thunkDataMappingCount;
 
         g_pThunkStubData = (uintptr_t)VirtualAlloc(NULL, thunkDataSize, MEM_RESERVE, PAGE_READWRITE);
@@ -324,14 +346,17 @@ EXTERN_C void* QCALLTYPE RhAllocateThunksMapping()
         {
             return NULL;
         }
+#endif
     }
 
     void* pThunkDataBlock = (int8_t*)g_pThunkStubData + nextThunkDataMapping * thunkDataMappingSize;
 
+#ifndef TARGET_LIBNX
     if (VirtualAlloc(pThunkDataBlock, thunkDataMappingSize, MEM_COMMIT, PAGE_READWRITE) == NULL)
     {
         return NULL;
     }
+#endif
 
     nextThunkDataMapping++;
 
