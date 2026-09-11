@@ -30,3 +30,20 @@ provides the complete sequence.
 Use `--llvm` and explicitly set `llvm-outfile` for each assembly in static mode.
 Both the ordinary AOT object and the LLVM object must be linked. The compiler
 version must report LLVM enabled.
+
+## Thread ownership
+
+`mono_thread_platform_create_thread`
+in `src/mono/mono/utils/mono-threads-posix.c` creates joinable pthreads.
+`ves_icall_System_Threading_Thread_Join_internal` calls `mono_thread_join` after
+the managed wait; the runtime's joinable-thread registry also reaps completed
+runtime threads. Do not add a second independent reaper to that path. In
+addition, `mono_threads_platform_exit` can call pthread_exit; a wrapper which
+queues reclamation only after its callback returns would miss this path.
+
+The separate native BCL API `SystemNative_CreateThread` in
+`src/native/libs/System.Native/pal_threading.c` still sets DETACHED and discards
+the pthread handle. This contract differs from Mono's managed-thread path and
+requires separate handling because libnx ignores the pthread detach state.
+The NativeAOT reaper handles that API; Mono's managed Thread.Join path has its
+own ownership and reclamation contract.
