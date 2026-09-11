@@ -17,13 +17,13 @@ constexpr size_t Page = 4096;
 constexpr size_t Capacity = size_t(512) << 20;
 struct Chunk {
     Chunk* next;
-    uintptr_t primary, writable;
+    uintptr_t primary;
     size_t size, references;
     void* backing;
     Handle handle;
-    bool executable, writableMapped, primaryMapped;
+    bool executable, primaryMapped;
 };
-struct View { View* next; uintptr_t address; size_t size; };
+struct View { View* next; uintptr_t address, primary; size_t size; };
 struct Region {
     Region* next;
     uintptr_t base;
@@ -68,14 +68,8 @@ void Require(Result rc) {
     // or mapped. Terminate rather than publish corrupted allocator ownership.
     if (R_FAILED(rc)) abort();
 }
-void UnmapWritable(Chunk* c) {
-    if (!c->writableMapped) return;
-    Require(svcUnmapProcessMemory(reinterpret_cast<void*>(c->writable), c->handle, c->primary, c->size));
-    c->writableMapped = false;
-}
 void DestroyChunk(Chunk* c) {
     if (c->references) abort();
-    UnmapWritable(c);
     if (c->primaryMapped)
         Require(svcUnmapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
     // The process handle is borrowed from libnx's environment, not ours to close.
@@ -84,7 +78,7 @@ void DestroyChunk(Chunk* c) {
 Chunk* CreateChunk(Mapper* m, uintptr_t primary, size_t size, bool executable) {
     Chunk* c = static_cast<Chunk*>(calloc(1, sizeof(Chunk)));
     if (!c) return nullptr;
-    c->primary = primary; c->writable = m->writable + (primary - m->primary);
+    c->primary = primary;
     c->size = size; c->executable = executable; c->handle = INVALID_HANDLE;
     c->backing = aligned_alloc(Page, size);
     if (!c->backing) { free(c); return nullptr; }
@@ -217,19 +211,44 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
     }
     View* view = static_cast<View*>(calloc(1, sizeof(View)));
     if (!view) return nullptr;
-    for (Chunk* c = r->chunks; c; c = c->next) {
-        if (!Overlaps(start, size, c->primary, c->size) || c->writableMapped) continue;
-        Result rc = svcMapProcessMemory(reinterpret_cast<void*>(c->writable), c->handle, c->primary, c->size);
-        if (R_FAILED(rc)) {
-            for (Chunk* undo = r->chunks; undo; undo = undo->next)
-                if (undo->executable && !undo->references && undo->writableMapped) UnmapWritable(undo);
+    // CoreCLR identifies writer blocks by address containment. Each request
+    // must therefore own a disjoint virtual view, including requests for the
+    // same or overlapping RX bytes (as with separate Unix mmap calls).
+    uintptr_t writable = m->writable;
+    bool moved;
+    do {
+        moved = false;
+        for (Region* existing = m->regions; existing; existing = existing->next)
+            for (View* live = existing->views; live; live = live->next)
+                if (Overlaps(writable, size, live->address, live->size)) {
+                    writable = live->address + live->size;
+                    moved = true;
+                }
+        if (writable - m->writable > Capacity || size > Capacity - (writable - m->writable)) {
             free(view); return nullptr;
         }
-        c->writableMapped = true;
+    } while (moved);
+    uintptr_t current = start;
+    for (; current < start + size;) {
+        Chunk* c = FindChunk(r, current);
+        size_t bytes = c->primary + c->size - current;
+        if (bytes > start + size - current) bytes = start + size - current;
+        Result rc = svcMapProcessMemory(reinterpret_cast<void*>(writable + current - start), c->handle, current, bytes);
+        if (R_FAILED(rc)) {
+            for (uintptr_t undo = start; undo < current;) {
+                Chunk* prior = FindChunk(r, undo);
+                size_t priorBytes = prior->primary + prior->size - undo;
+                if (priorBytes > current - undo) priorBytes = current - undo;
+                Require(svcUnmapProcessMemory(reinterpret_cast<void*>(writable + undo - start), prior->handle, undo, priorBytes));
+                undo += priorBytes;
+            }
+            free(view); return nullptr;
+        }
+        current += bytes;
     }
     for (Chunk* c = r->chunks; c; c = c->next)
         if (Overlaps(start, size, c->primary, c->size)) ++c->references;
-    view->address = m->writable + (start - m->primary); view->size = size;
+    view->address = writable; view->primary = start; view->size = size;
     view->next = r->views; r->views = view;
     return reinterpret_cast<void*>(view->address);
 }
@@ -242,16 +261,20 @@ bool VMToOSInterface::ReleaseRWMapping(void* address, size_t size) {
             View** link = &r->views;
             while (*link && ((*link)->address != start || (*link)->size != size)) link = &(*link)->next;
             if (!*link) continue;
-            View* view = *link; *link = view->next; free(view);
-            uintptr_t primary = m->primary + (start - m->writable);
-            for (Chunk* c = r->chunks; c; c = c->next) {
-                if (!Overlaps(primary, size, c->primary, c->size)) continue;
-                // Publish while the writable alias still exists. CoreCLR also
-                // uses the explicit flush hook when it keeps a view cached.
-                armDCacheFlush(reinterpret_cast<void*>(c->writable), c->size);
-                armICacheInvalidate(reinterpret_cast<void*>(c->primary), c->size);
-                if (--c->references == 0) UnmapWritable(c);
+            View* view = *link;
+            // Publish only this alias, then retire precisely the segments that
+            // were mapped for it. Other views remain independently writable.
+            armDCacheFlush(reinterpret_cast<void*>(start), size);
+            armICacheInvalidate(reinterpret_cast<void*>(view->primary), size);
+            for (uintptr_t current = view->primary; current < view->primary + size;) {
+                Chunk* c = FindChunk(r, current);
+                size_t bytes = c->primary + c->size - current;
+                if (bytes > view->primary + size - current) bytes = view->primary + size - current;
+                Require(svcUnmapProcessMemory(reinterpret_cast<void*>(start + current - view->primary), c->handle, current, bytes));
+                --c->references;
+                current += bytes;
             }
+            *link = view->next; free(view);
             return true;
         }
     }
@@ -285,11 +308,13 @@ extern "C" bool LibnxFlushCodeMemory(const void* address, size_t size) {
         if (!c || !c->executable) return false;
         current = c->primary + c->size;
     }
-    for (Chunk* c = r->chunks; c; c = c->next) {
-        if (!Overlaps(page, bytes, c->primary, c->size)) continue;
-        if (c->writableMapped) armDCacheFlush(reinterpret_cast<void*>(c->writable), c->size);
-        armICacheInvalidate(reinterpret_cast<void*>(c->primary), c->size);
+    for (View* view = r->views; view; view = view->next) {
+        if (!Overlaps(page, bytes, view->primary, view->size)) continue;
+        uintptr_t first = page > view->primary ? page : view->primary;
+        uintptr_t last = page + bytes < view->primary + view->size ? page + bytes : view->primary + view->size;
+        armDCacheFlush(reinterpret_cast<void*>(view->address + first - view->primary), last - first);
     }
+    armICacheInvalidate(reinterpret_cast<void*>(page), bytes);
     return true;
 }
 

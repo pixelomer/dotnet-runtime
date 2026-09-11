@@ -79,20 +79,18 @@ static void* worker(void* argument) {
         check(zero(whole, 12288), "fresh executable backing zero");
         check(permission(whole) == Perm_Rw, "writable alias permissions");
         auto partial = static_cast<unsigned char*>(VM::GetRWMapping(work.mapper, p + 4096, offset + 4096, 4096));
-        check(partial == whole + 4096, "partial view shares alias");
+        check(partial != nullptr && (uintptr_t(partial) + 4096 <= uintptr_t(whole) || uintptr_t(whole) + 12288 <= uintptr_t(partial)), "overlapping RX request owns a disjoint writable view");
         check(!VM::ReleaseDoubleMappedMemory(work.mapper, p, offset, 32768), "live views prevent release");
         emit(whole, 123); emit(whole + 8192, 456);
         check(DBG_FlushInstructionCache(p, 12288), "production PAL cache publication while views live");
         check(reinterpret_cast<Function>(p)() == 123 && reinterpret_cast<Function>(p + 8192)() == 456, "execute both chunks");
         check(VM::ReleaseRWMapping(whole, 12288), "release large overlapping view");
-        check(permission(partial) == Perm_Rw && permission(whole + 8192) == Perm_None, "only still-referenced object retains alias");
+        check(permission(partial) == Perm_Rw, "independent partial writer survives release of whole view");
         emit(partial, 789);
         check(DBG_FlushInstructionCache(p + 4096, 8), "publish partial cached view");
         check(reinterpret_cast<Function>(p + 4096)() == 789, "partial view function");
         check(VM::ReleaseRWMapping(partial, 4096), "release final view");
-        check(permission(whole) == Perm_None, "final writable alias really unmapped");
         check(reinterpret_cast<Function>(p)() == 123, "RX remains executable after owner unmap");
-        check(!VM::ReleaseRWMapping(partial, 4096), "stale view rejected");
         check(!VM::GetRWMapping(work.mapper, p, offset + 4096, 4096), "offset mismatch rejected");
         check(!VM::GetRWMapping(work.mapper, p + 12288, offset + 12288, 4096), "uncommitted view rejected");
         check(!VM::CommitDoubleMappedMemory(p, 4096, false), "conflicting recommit rejected");
@@ -146,6 +144,8 @@ int main() {
         void* writer = VM::GetRWMapping(mapper, p + 4096, 4096, 4096);
         check(writer != nullptr, "failure-test initial writer"); emit(writer, 321);
         check(VM::ReleaseRWMapping(writer, 4096), "publish preexisting function");
+        check(permission(writer) == Perm_None, "single-thread retired view really unmapped");
+        check(!VM::ReleaseRWMapping(writer, 4096), "single-thread stale view rejected before reuse");
         for (auto* fault : {&failCodeMap, &failPermission}) {
             *fault = 2;
             check(!VM::CommitDoubleMappedMemory(p, 12288, true), "second fresh-run failure");

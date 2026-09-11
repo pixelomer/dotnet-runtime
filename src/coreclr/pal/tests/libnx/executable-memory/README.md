@@ -18,7 +18,8 @@ log before running it.
 
 Eight rounds exercise 2,048 worker allocation lifetimes across 32 threads:
 partial commitment, overlapping idempotent commits, views crossing backing
-chunks, overlapping view references, real final-owner unmapping, unchanged RX
+chunks, disjoint writer addresses for overlapping RX requests, independent
+view retirement, real unmapping before single-thread reuse, unchanged RX
 execution after writer retirement, zero initialization after commitment,
 invalid offset/range/protection requests and adjacent RW-data/RX-code layout.
 An emitted PC-relative function reads its adjacent writable data, as required by
@@ -39,9 +40,12 @@ bounded allocator, not general fixed mmap support.
 
 Each fresh commit run owns aligned backing mapped through MapProcessCodeMemory
 and protected RX or RW through SetProcessMemoryPermission. Writable subviews
-use MapProcessMemory against the actual RX mapping, tracking references per
-chunk. The last view reference unmaps that chunk's writable alias. The original
-source heap remains kernel-locked until writable aliases and primary mappings
+use MapProcessMemory against the actual RX mapping. Each request owns a
+disjoint writer address range and retains its source chunks, including requests
+for overlapping RX bytes. Releasing one view flushes its aliases and unmaps
+only its own segments; other views remain independently writable. Partial map
+failures roll back acquired segments. The original source heap remains
+kernel-locked until writable aliases and primary mappings
 are removed. The process handle is borrowed and never closed by the allocator.
 An unrecoverable cleanup error terminates rather than freeing mapped/locked
 backing. Ordinary map/protect failures roll back new work.
