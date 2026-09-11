@@ -153,28 +153,20 @@ else()
     add_definitions(-DPT_GNU_EH_FRAME=PT_EH_FRAME)
   endif()
 
-  list(APPEND COMMON_RUNTIME_SOURCES
-    unix/PalRedhawkUnix.cpp
-    unix/PalCreateDump.cpp
-    ${GC_DIR}/unix/numasupport.cpp
-    ${GC_DIR}/unix/events.cpp
-    ${GC_DIR}/unix/cgroup.cpp
-  )
-
-  list(APPEND FULL_RUNTIME_SOURCES
-    unix/cgroupcpu.cpp
-    unix/HardwareExceptions.cpp
-    unix/UnixSignals.cpp
-    unix/UnwindHelpers.cpp
-    unix/UnixNativeCodeManager.cpp
-  )
-
+  list(APPEND COMMON_RUNTIME_SOURCES ${GC_DIR}/unix/events.cpp)
+  list(APPEND FULL_RUNTIME_SOURCES unix/UnwindHelpers.cpp unix/UnixNativeCodeManager.cpp)
   if(CLR_CMAKE_TARGET_LIBNX)
     list(APPEND FULL_RUNTIME_SOURCES libnx/LibnxContext.cpp)
-    list(APPEND COMMON_RUNTIME_SOURCES libnx/GCToOS.cpp libnx/nxvm.c)
+    list(APPEND COMMON_RUNTIME_SOURCES
+      libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c libnx/GCToOS.cpp libnx/nxvm.c)
+    # Horizon uses its own exception and suspension adapters instead of Linux
+    # cgroups, NUMA, signal handlers and the subprocess crash dumper.
   else()
-    list(APPEND FULL_RUNTIME_SOURCES unix/UnixContext.cpp)
-    list(APPEND COMMON_RUNTIME_SOURCES ${GC_DIR}/unix/gcenv.unix.cpp)
+    list(APPEND COMMON_RUNTIME_SOURCES
+      unix/PalRedhawkUnix.cpp unix/PalCreateDump.cpp
+      ${GC_DIR}/unix/numasupport.cpp ${GC_DIR}/unix/cgroup.cpp ${GC_DIR}/unix/gcenv.unix.cpp)
+    list(APPEND FULL_RUNTIME_SOURCES
+      unix/cgroupcpu.cpp unix/HardwareExceptions.cpp unix/UnixSignals.cpp unix/UnixContext.cpp)
   endif()
 
   include(${CLR_SRC_NATIVE_DIR}/external/llvm-libunwind.cmake)

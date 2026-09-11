@@ -54,7 +54,9 @@ FCIMPLEND
 #include "PalCreateDump.h"
 FCIMPL2(void, RhCreateCrashDumpIfEnabled, PEXCEPTION_RECORD pExceptionRecord, PCONTEXT pExContext)
 {
+#ifndef TARGET_LIBNX
     PalCreateCrashDumpIfEnabled(pExceptionRecord, pExContext);
+#endif // Horizon has no subprocess crash-dump service; fatal handling is separate.
 }
 FCIMPLEND
 #endif

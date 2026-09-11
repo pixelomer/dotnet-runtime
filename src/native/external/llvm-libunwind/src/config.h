@@ -34,6 +34,10 @@
   #else
     #define _LIBUNWIND_SUPPORT_DWARF_UNWIND 1
   #endif
+#elif defined(__SWITCH__)
+  // The NRO is a single statically linked image; libnx has no dl_iterate_phdr.
+  #define _LIBUNWIND_SUPPORT_DWARF_UNWIND 1
+  #define _LIBUNWIND_SUPPORT_DWARF_INDEX 1
 #elif defined(_LIBUNWIND_IS_BAREMETAL)
   #if !defined(_LIBUNWIND_ARM_EHABI)
     #define _LIBUNWIND_SUPPORT_DWARF_UNWIND 1

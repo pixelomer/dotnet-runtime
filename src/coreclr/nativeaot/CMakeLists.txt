@@ -30,7 +30,9 @@ if(CLR_CMAKE_HOST_UNIX)
   endif(CLR_CMAKE_TARGET_ARCH_AMD64 OR CLR_CMAKE_TARGET_ARCH_I386)
 endif (CLR_CMAKE_HOST_UNIX)
 
-if(CLR_CMAKE_TARGET_ANDROID)
+if(CLR_CMAKE_TARGET_ANDROID OR CLR_CMAKE_TARGET_LIBNX)
+    # libnx's -mtp=soft TLS base is supplied by __aarch64_read_tp. Runtime
+    # assembly must use the C TLS accessors, not Linux's TPIDR_EL0 sequence.
     add_definitions(-DFEATURE_EMULATED_TLS)
 endif()
 

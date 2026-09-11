@@ -25,7 +25,7 @@
 #include "libunwind_ext.h"
 
 #ifndef _LIBUNWIND_USE_DLADDR
-  #if !(defined(_LIBUNWIND_IS_BAREMETAL) || defined(_WIN32) || defined(_AIX))
+  #if !(defined(_LIBUNWIND_IS_BAREMETAL) || defined(_WIN32) || defined(_AIX) || defined(__SWITCH__))
     #define _LIBUNWIND_USE_DLADDR 1
   #else
     #define _LIBUNWIND_USE_DLADDR 0
@@ -69,6 +69,13 @@ char *getFuncNameFromTBTable(uintptr_t pc, uint16_t &NameLen,
 
 namespace libunwind {
   bool findDynamicUnwindSections(void *, unw_dynamic_unwind_sections *);
+}
+
+#elif defined(__SWITCH__)
+extern "C" {
+extern char _start[], __end__[];
+extern char __eh_frame_start[], __eh_frame_end[];
+extern char __eh_frame_hdr_start[], __eh_frame_hdr_end[];
 }
 
 #elif defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND) && defined(_LIBUNWIND_IS_BAREMETAL)
@@ -517,6 +524,16 @@ inline bool LocalAddressSpace::findUnwindSections(pint_t targetAddr,
         dynamicUnwindSectionInfo.compact_unwind_section_length;
     return true;
   }
+
+#elif defined(__SWITCH__)
+  if (targetAddr < (uintptr_t)_start || targetAddr >= (uintptr_t)__end__)
+    return false;
+  info.dso_base = (uintptr_t)_start;
+  info.dwarf_section = (uintptr_t)__eh_frame_start;
+  info.dwarf_section_length = (uintptr_t)__eh_frame_end - (uintptr_t)__eh_frame_start;
+  info.dwarf_index_section = (uintptr_t)__eh_frame_hdr_start;
+  info.dwarf_index_section_length = (uintptr_t)__eh_frame_hdr_end - (uintptr_t)__eh_frame_hdr_start;
+  return info.dwarf_section_length != 0;
 
 #elif defined(_LIBUNWIND_SUPPORT_DWARF_UNWIND) && defined(_LIBUNWIND_IS_BAREMETAL)
   info.dso_base = 0;
