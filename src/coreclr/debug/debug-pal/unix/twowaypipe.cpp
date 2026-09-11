@@ -15,6 +15,11 @@
 // true - success, false - failure (use GetLastError() for more details)
 bool TwoWayPipe::CreateServer(const ProcessDescriptor& pd)
 {
+#ifdef TARGET_LIBNX
+    // The debugger's filesystem FIFO protocol has no Horizon transport yet.
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return false;
+#else
     _ASSERTE(m_state == NotInitialized);
     if (m_state != NotInitialized)
         return false;
@@ -40,6 +45,7 @@ bool TwoWayPipe::CreateServer(const ProcessDescriptor& pd)
 
     m_state = Created;
     return true;
+#endif
 }
 
 // Connects to a previously opened server side of the pipe.
@@ -47,6 +53,11 @@ bool TwoWayPipe::CreateServer(const ProcessDescriptor& pd)
 // true - success, false - failure (use GetLastError() for more details)
 bool TwoWayPipe::Connect(const ProcessDescriptor& pd)
 {
+#ifdef TARGET_LIBNX
+    // The debugger's filesystem FIFO protocol has no Horizon transport yet.
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return false;
+#else
     _ASSERTE(m_state == NotInitialized);
     if (m_state != NotInitialized)
         return false;
@@ -74,6 +85,7 @@ bool TwoWayPipe::Connect(const ProcessDescriptor& pd)
     m_state = ClientConnected;
     return true;
 
+#endif
 }
 
 // Waits for incoming client connections, assumes GetState() == Created

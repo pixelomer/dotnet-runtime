@@ -203,6 +203,12 @@ endif(NOT CLR_CMAKE_HOST_ARCH_WASM)
 target_link_libraries(coreclr_static PUBLIC ${CORECLR_LIBRARIES} cee_wks_core ${CORECLR_STATIC_CLRJIT_STATIC} ${CEE_WKS_STATIC} ${FOUNDATION})
 target_compile_definitions(coreclr_static PUBLIC CORECLR_EMBEDDED)
 
+if(CLR_CMAKE_TARGET_LIBNX)
+    # Embedded hosts need the JIT's GC map encoder and bundled-image inflater.
+    target_link_libraries(coreclr_static PUBLIC gcinfo System.IO.Compression.Native-Static)
+endif()
+
+
 if (CLR_CMAKE_HOST_ANDROID)
     target_link_libraries(coreclr PUBLIC log)
     target_link_libraries(coreclr_static

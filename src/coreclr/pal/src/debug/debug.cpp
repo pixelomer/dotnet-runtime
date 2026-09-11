@@ -751,6 +751,31 @@ PAL_ProbeMemory(
     DWORD cbBuffer,
     BOOL fWriteAccess)
 {
+#ifdef TARGET_LIBNX
+    // Horizon exposes actual process mappings and permissions. Inspect every
+    // span without writing into the caller's memory or creating a Unix pipe.
+    // As with the Unix probe, concurrent unmapping can invalidate this result.
+    uintptr_t current = reinterpret_cast<uintptr_t>(pBuffer);
+    if (cbBuffer > UINTPTR_MAX - current)
+        return FALSE;
+    uintptr_t end = current + cbBuffer;
+    while (current < end)
+    {
+        MEMORY_BASIC_INFORMATION info;
+        if (VirtualQuery(reinterpret_cast<void*>(current), &info, sizeof(info)) != sizeof(info) ||
+            info.State != MEM_COMMIT || (info.Protect & PAGE_NOACCESS))
+            return FALSE;
+        DWORD allowed = fWriteAccess ? (PAGE_READWRITE | PAGE_EXECUTE_READWRITE) :
+            (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE);
+        if (!(info.Protect & allowed))
+            return FALSE;
+        uintptr_t base = reinterpret_cast<uintptr_t>(info.BaseAddress);
+        if (info.RegionSize > UINTPTR_MAX - base || base + info.RegionSize <= current)
+            return FALSE;
+        current = base + info.RegionSize;
+    }
+    return TRUE;
+#else
     int fds[2];
     int flags;
 
@@ -807,6 +832,7 @@ PAL_ProbeMemory(
     close(fds[1]);
 
     return result;
+#endif
 }
 
 } // extern "C"

@@ -806,6 +806,12 @@ SharedMemoryId::SharedMemoryId()
 
 SharedMemoryId::SharedMemoryId(LPCSTR name, bool isUserScope)
 {
+#ifdef TARGET_LIBNX
+    // Named objects require cross-process file locking and a Unix identity/
+    // session namespace. Neither contract is provided by Horizon. Reject before
+    // creating files; unnamed PAL objects keep their normal process-local path.
+    throw SharedMemoryException(ERROR_NOT_SUPPORTED);
+#else
     _ASSERTE(name != nullptr);
 
     // Look for "Global\" and "Local\" prefixes in the name, and determine the session ID
@@ -853,6 +859,7 @@ SharedMemoryId::SharedMemoryId(LPCSTR name, bool isUserScope)
     {
         throw SharedMemoryException(static_cast<DWORD>(SharedMemoryError::IO));
     }
+#endif
 }
 
 LPCSTR SharedMemoryId::GetName() const

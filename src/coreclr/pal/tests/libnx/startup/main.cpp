@@ -116,6 +116,34 @@ static void testPalThreads() {
         }
     }
 }
+static void testMemoryProbe() {
+    auto memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, 12288, MEM_RESERVE, PAGE_READWRITE));
+    check(memory != nullptr, "reserve PAL probe range");
+    check(!PAL_ProbeMemory(memory, 1, FALSE), "probe rejects uncommitted address");
+    check(VirtualAlloc(memory, 8192, MEM_COMMIT, PAGE_READWRITE) == memory, "commit two probe pages");
+    memset(memory, 0x69, 8192);
+    check(PAL_ProbeMemory(memory + 4095, 2, TRUE), "writable probe crosses two committed pages");
+    check(!PAL_ProbeMemory(memory + 8191, 2, FALSE), "probe rejects trailing uncommitted page");
+    DWORD old;
+    check(!VirtualProtect(memory + 4096, 4096, PAGE_READONLY, &old) && GetLastError() == ERROR_NOT_SUPPORTED, "data allocator rejects unsupported protection change");
+    check(PAL_ProbeMemory(memory, 8192, FALSE), "readable probe spans both committed pages");
+    static const char readOnly[] = "Horizon read-only probe data";
+    check(PAL_ProbeMemory(const_cast<char*>(readOnly), sizeof(readOnly), FALSE), "resident read-only data is readable");
+    check(!PAL_ProbeMemory(const_cast<char*>(readOnly), sizeof(readOnly), TRUE), "resident read-only data rejects write");
+    check(memory[0] == 0x69 && memory[8191] == 0x69, "probe leaves caller bytes unchanged");
+    check(!PAL_ProbeMemory(reinterpret_cast<void*>(UINTPTR_MAX - 3), 8, FALSE), "probe rejects address overflow");
+    check(PAL_ProbeMemory(nullptr, 0, FALSE), "empty range is vacuously valid");
+    check(!PAL_ProbeMemory(nullptr, 1, FALSE), "null nonempty range is unreadable");
+    check(VirtualFree(memory, 0, MEM_RELEASE), "release probe range");
+    check(!PAL_ProbeMemory(memory, 1, FALSE), "probe rejects retired mapping");
+    check(PAL_ProbeMemory(reinterpret_cast<void*>(ModuleProbeFunction), 4, FALSE), "probe sees resident executable outside PAL allocator");
+    check(!PAL_ProbeMemory(reinterpret_cast<void*>(ModuleProbeFunction), 4, TRUE), "probe rejects write into resident executable");
+    auto mutex = CreateMutexW(nullptr, FALSE, W("coreclr-horizon-unsupported-named-mutex"));
+    check(mutex == nullptr && GetLastError() == ERROR_NOT_SUPPORTED, "named mutex rejects unsupported shared namespace");
+    mutex = CreateMutexW(nullptr, FALSE, nullptr);
+    check(mutex != nullptr && WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0, "unnamed mutex retains normal acquisition");
+    check(ReleaseMutex(mutex) && CloseHandle(mutex), "unnamed mutex retains release and ownership retirement");
+}
 int main(int argc, char** argv) {
     output = fopen("sdmc:/switch/coreclr-startup-probe.txt", "w");
     if (!output) return 1;
@@ -128,6 +156,7 @@ int main(int argc, char** argv) {
     uint64_t pid;
     check(svcGetProcessId(&pid, CUR_PROCESS_HANDLE) == 0 && GetCurrentProcessId() == pid, "PAL process identity matches Horizon");
     check(OpenProcess(0, FALSE, static_cast<DWORD>(pid + 1)) == nullptr && GetLastError() == ERROR_NOT_SUPPORTED, "foreign process handles explicitly unsupported");
+    testMemoryProbe();
     testChannel();
     testPalThreads();
     FlushProcessWriteBuffers();
