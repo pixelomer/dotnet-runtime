@@ -46,3 +46,14 @@ code manager. Undefined/value-only register rules produce no saved home.
 See the [native unwind probe](../../src/coreclr/pal/tests/libnx/unwind/README.md)
 for spill updates, epilogue restoration and lookup-failure cases. Keep the
 vendored LLVM license and notices.
+
+## System information
+
+Logical CPU count comes from the process core mask; CPU-set storage uses one
+past the highest possible index so sparse masks fit. Address-space limits come
+from Horizon's ASLR-region query. Invalid bounds terminate the void system-info
+API rather than supplying fabricated limits.
+
+Default-stack configuration uses the existing 64 KiB thread-creation fallback
+when newlib omits `PTHREAD_STACK_MIN`. File-descriptor limit adjustment is
+disabled because Horizon/newlib does not provide the POSIX resource-limit API.

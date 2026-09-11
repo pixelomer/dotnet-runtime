@@ -216,6 +216,8 @@ set(SOURCES
 )
 
 if(CLR_CMAKE_TARGET_LIBNX)
+  # Horizon/newlib has no POSIX resource-limit API.
+  add_definitions(-DDONT_SET_RLIMIT_NOFILE)
   list(APPEND SOURCES exception/libnx/unwind.cpp)
   set_source_files_properties(exception/libnx/unwind.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${CLR_SRC_NATIVE_DIR}/external/llvm-libunwind/include"

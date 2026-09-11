@@ -30,7 +30,10 @@ Revision History:
 #include <inttypes.h>
 #include <sys/types.h>
 
-#if HAVE_SYSCONF
+#if defined(TARGET_LIBNX)
+#include <switch/kernel/svc.h>
+#include <switch/result.h>
+#elif HAVE_SYSCONF
 // <unistd.h> already included above
 #elif HAVE_SYSCTL
 #include <sys/sysctl.h>
@@ -94,7 +97,7 @@ Revision History:
 
 SET_DEFAULT_DEBUG_CHANNEL(MISC);
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(TARGET_LIBNX)
 #if HAVE_SYSCONF && HAVE__SC_AVPHYS_PAGES
 #define SYSCONF_PAGES _SC_AVPHYS_PAGES
 #elif HAVE_SYSCONF && HAVE__SC_PHYS_PAGES
@@ -110,7 +113,9 @@ PAL_GetTotalCpuCount()
 {
     int nrcpus = 0;
 
-#if HAVE_SYSCONF
+#if defined(TARGET_LIBNX)
+    nrcpus = minipal_get_cpu_max_possible_count();
+#elif HAVE_SYSCONF
 
 #if defined(HOST_ARM) || defined(HOST_ARM64)
 #define SYSCONF_GET_NUMPROCS       _SC_NPROCESSORS_CONF
@@ -151,6 +156,12 @@ DWORD
 PALAPI
 PAL_GetLogicalCpuCountFromOS()
 {
+#if defined(TARGET_LIBNX)
+    u64 mask;
+    if (R_SUCCEEDED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)) && mask != 0)
+        return __builtin_popcountll(mask);
+    return PAL_GetTotalCpuCount();
+#else
     static int nrcpus = -1;
 
     if (nrcpus == -1)
@@ -198,6 +209,7 @@ PAL_GetLogicalCpuCountFromOS()
     }
 
     return nrcpus;
+#endif // TARGET_LIBNX
 }
 
 /*++
@@ -246,7 +258,18 @@ GetSystemInfo(
     TRACE("dwNumberOfProcessors=%d\n", nrcpus);
     lpSystemInfo->dwNumberOfProcessors = nrcpus;
 
-#ifdef VM_MAXUSER_ADDRESS
+#if defined(TARGET_LIBNX)
+    u64 addressBase, addressSize;
+    if (R_FAILED(svcGetInfo(&addressBase, InfoType_AslrRegionAddress, CUR_PROCESS_HANDLE, 0)) ||
+        R_FAILED(svcGetInfo(&addressSize, InfoType_AslrRegionSize, CUR_PROCESS_HANDLE, 0)) ||
+        addressSize == 0 || addressBase > UINTPTR_MAX - addressSize)
+    {
+        // The void API cannot communicate failure. An invalid virtual-address
+        // limit would corrupt allocator decisions; do not invent Linux bounds.
+        abort();
+    }
+    lpSystemInfo->lpMaximumApplicationAddress = (PVOID)(addressBase + addressSize - 1);
+#elif defined(VM_MAXUSER_ADDRESS)
     lpSystemInfo->lpMaximumApplicationAddress = (PVOID) VM_MAXUSER_ADDRESS;
 #elif defined(__linux__)
     lpSystemInfo->lpMaximumApplicationAddress = (PVOID) (1ull << 47);

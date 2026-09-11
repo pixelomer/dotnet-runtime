@@ -15,6 +15,8 @@ extern "C"
 // On Linux, this reads /sys/devices/system/cpu/possible to account for CPU hotplug.
 // This may be larger than the number of online or present CPUs.
 // Falls back to sysconf(_SC_NPROCESSORS_CONF) if the sysfs file is unavailable.
+// On Horizon, returns one past the highest index in the process core mask;
+// this sizes tables for all permitted cores, including a sparse mask.
 int minipal_get_cpu_max_possible_count(void);
 
 #ifdef __cplusplus

@@ -254,7 +254,13 @@ InitializeDefaultStackSize()
         DWORD size;
         if (defStackSize.TryAsInteger(16, size))
         {
-            g_defaultStackSize = std::max(size, (DWORD)PTHREAD_STACK_MIN);
+#ifdef PTHREAD_STACK_MIN
+            const DWORD minimumStackSize = PTHREAD_STACK_MIN;
+#else
+            // Match the existing fallback in InternalCreateThread.
+            const DWORD minimumStackSize = 64 * 1024;
+#endif
+            g_defaultStackSize = std::max(size, minimumStackSize);
         }
     }
 
