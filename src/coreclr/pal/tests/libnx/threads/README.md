@@ -2,13 +2,15 @@
 
 Follow the toolchain and ICU prerequisites in the
 [context probe](../context/README.md). This probe also needs the libnx
-`pthreadGetNativeHandle` extension. From the runtime root, obtain and stage the matching
+`pthreadGetNativeHandle` extension. The pinned SDK also includes corrected
+`fcntl` error handling required by the full PAL startup probe.
+From the runtime root, obtain and stage the matching
 [libnx source](https://github.com/pixelomer/libnx) without replacing the installed
 SDK:
 
 ```sh
 git clone https://github.com/pixelomer/libnx.git artifacts/libnx-source
-git -C artifacts/libnx-source checkout --detach cb5645686f762feb9e3a8c21cd683b1044df615c
+git -C artifacts/libnx-source checkout --detach 93ca59adeaf4d0d86a456b5266dd8eb5b024fe55
 make -C artifacts/libnx-source/nx install DESTDIR="$PWD/artifacts/libnx-sdk" -j6
 LIBNX_ROOT="$PWD/artifacts/libnx-sdk$DEVKITPRO/libnx"
 ROOTFS_DIR="$DEVKITPRO" src/coreclr/build-runtime.sh \

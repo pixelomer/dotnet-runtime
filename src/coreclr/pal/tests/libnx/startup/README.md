@@ -2,7 +2,10 @@
 
 Follow the [thread probe](../threads/README.md) for devkitPro/ICU prerequisites,
 the pinned libnx source with fsdevPread/pthreadGetNativeHandle, SDK staging and
-CoreCLR cross-configuration. From the runtime root:
+CoreCLR cross-configuration. Its pinned SDK includes corrected fcntl error
+handling, which the file-descriptor checks require. The probe exercises
+retained mappings/views after closing original handles and verifies that
+snapshot reads preserve the shared native file cursor. From the runtime root:
 
 ```sh
 cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \

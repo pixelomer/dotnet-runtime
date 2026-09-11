@@ -39,3 +39,28 @@ void HostDumpStackMap()
     }
 }
 }
+
+extern "C" void HostFileTrace(const WCHAR*, void*, unsigned);
+extern "C" HANDLE PALAPI __real_CreateFileW(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
+extern "C" HANDLE PALAPI __wrap_CreateFileW(LPCWSTR path, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES security, DWORD disposition, DWORD flags, HANDLE templateFile)
+{
+    HANDLE result = __real_CreateFileW(path, access, share, security, disposition, flags, templateFile);
+    DWORD error = GetLastError();
+    HostFileTrace(path, result, error);
+    SetLastError(error);
+    return result;
+}
+extern "C" int PALAPI __real_WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR, int, LPCSTR, LPBOOL);
+extern "C" int PALAPI __wrap_WideCharToMultiByte(UINT page, DWORD flags, LPCWSTR input, int count, LPSTR output, int capacity, LPCSTR fallback, LPBOOL used)
+{
+    int result = __real_WideCharToMultiByte(page, flags, input, count, output, capacity, fallback, used);
+    DWORD error = GetLastError();
+    if (!result) {
+        char text[180];
+        snprintf(text, sizeof(text), "WideCharToMultiByte page=%u flags=%x count=%d capacity=%d error=%u", page, flags, count, capacity, error);
+        LibnxRuntimeDiagnostic(text);
+        HostFileTrace(input, nullptr, error);
+    }
+    SetLastError(error);
+    return result;
+}

@@ -504,7 +504,14 @@ CorUnix::InternalCreateFile(
             palError = ERROR_INVALID_PARAMETER;
             goto done;
         }
+#ifdef TARGET_LIBNX
+        // Horizon has no fork/exec descriptor inheritance; process creation is
+        // explicitly unsupported by PAL. Reject a requested inherited handle.
+        palError = ERROR_NOT_SUPPORTED;
+        goto done;
+#else
         inheritable = TRUE;
+#endif
     }
 
     if ( (dwFlagsAndAttributes & PAL_LEGAL_FLAGS_ATTRIBS) !=
@@ -633,6 +640,7 @@ CorUnix::InternalCreateFile(
     }
 #endif
 
+#ifndef TARGET_LIBNX
     /* make file descriptor close-on-exec; inheritable handles will get
       "uncloseonexeced" in CreateProcess if they are actually being inherited*/
     if(-1 == fcntl(filed,F_SETFD, FD_CLOEXEC))
@@ -642,6 +650,11 @@ CorUnix::InternalCreateFile(
         palError = ERROR_INTERNAL_ERROR;
         goto done;
     }
+
+#else
+    // No exec operation exists on Horizon; there is no close-on-exec state to
+    // configure. The native descriptor retains its ordinary process lifetime.
+#endif
 
     palError = g_pObjectManager->AllocateObject(
         pThread,
@@ -967,6 +980,22 @@ done:
     LOGEXIT("DeleteFileA returns BOOL %d\n", bRet);
     PERF_EXIT(DeleteFileA);
     return bRet;
+}
+
+int CorUnix::InternalDuplicateDescriptor(int descriptor)
+{
+#ifdef TARGET_LIBNX
+    // libsysbase's dup retains the real handle-manager entry and reference
+    // count. libnx fcntl is a socket API and cannot duplicate file descriptors.
+    if (descriptor < 0) { errno = EBADF; return -1; }
+    errno = 0;
+    int result = dup(descriptor);
+    // Current libsysbase does not set errno when its descriptor table is full.
+    if (result < 0 && errno == 0) errno = EMFILE;
+    return result;
+#else
+    return fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
+#endif
 }
 
 /*++
@@ -2416,7 +2445,7 @@ static HANDLE init_std_handle(HANDLE * pStd, FILE *stream)
 
     /* duplicate the FILE *, so that we can fclose() in FILECloseHandle without
        closing the original */
-    new_fd = fcntl(fileno(stream), F_DUPFD_CLOEXEC, 0); // dup, but with CLOEXEC
+    new_fd = InternalDuplicateDescriptor(fileno(stream));
     if(-1 == new_fd)
     {
         ERROR("dup() failed; errno is %d (%s)\n", errno, strerror(errno));

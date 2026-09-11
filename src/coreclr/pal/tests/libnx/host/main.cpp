@@ -1,15 +1,24 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include "coreclrhost.h"
 extern "C" { unsigned __nx_applet_exit_mode = 1; }
 static FILE* output;
 extern "C" void HostProtectionTrace(void* address, size_t size, unsigned protection, int result, unsigned error)
 {
-    fprintf(output, "VirtualProtect address=%p size=%zu protect=%x result=%d error=%u\n", address, size, protection, result, error);
+    if (output) fprintf(output, "VirtualProtect address=%p size=%zu protect=%x result=%d error=%u\n", address, size, protection, result, error);
 }
-extern "C" void LibnxRuntimeDiagnostic(const char* text) { fprintf(output, "NATIVE: %s\n", text); }
-extern "C" void HostStackReservationTrace(size_t size, void* result) { fprintf(output, "StackReservation size=%zu result=%p\n", size, result); }
+extern "C" void LibnxRuntimeDiagnostic(const char* text) { if (output) fprintf(output, "NATIVE: %s\n", text); }
+extern "C" void HostStackReservationTrace(size_t size, void* result) { if (output) fprintf(output, "StackReservation size=%zu result=%p\n", size, result); }
 extern "C" void HostDumpStackMap();
+extern "C" void HostFileTrace(const uint16_t* path, void* result, unsigned error)
+{
+    char text[256]; size_t length = 0;
+    if (path) for (; length < sizeof(text) - 1 && path[length]; ++length)
+        text[length] = path[length] < 128 ? char(path[length]) : '?';
+    text[length] = 0;
+    if (output) fprintf(output, "CreateFile path=%s result=%p error=%u\n", text, result, error);
+}
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
 int main(int argc, char** argv)
 {

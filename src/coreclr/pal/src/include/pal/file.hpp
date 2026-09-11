@@ -126,6 +126,9 @@ namespace CorUnix
         PathCharString& lpBuffer
         );
 
+    // Retain an actual native file description for mapping/standard handles.
+    int InternalDuplicateDescriptor(int descriptor);
+
     /*++
     InternalOpen
     Wraps open

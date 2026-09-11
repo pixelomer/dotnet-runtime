@@ -5,6 +5,7 @@
 #include "pal/process.h"
 #include <atomic>
 #include <malloc.h>
+#include <fcntl.h>
 extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/arm/counter.h>
@@ -170,11 +171,27 @@ static void testFiles() {
     FILE* seed = fopen("sdmc:/switch/coreclr-pal-file-input.bin", "wb");
     check(seed != nullptr, "create native input for PAL file test");
     check(fwrite("FILE", 1, 4, seed) == 4 && fclose(seed) == 0, "finish native input before PAL open");
-    auto file = CreateFileW(W("sdmc:/switch/coreclr-pal-file-input.bin"), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    check(file != INVALID_HANDLE_VALUE, "PAL opens actual native test input");
-    unsigned char magic[2]; DWORD read = 0;
-    check(ReadFile(file, magic, sizeof(magic), &read, nullptr) && read == 2 && magic[0] == 'F' && magic[1] == 'I', "PAL reads real file contents");
-    check(CloseHandle(file), "PAL closes real file handle");
+    errno = 0;
+    check(fcntl(0, F_DUPFD_CLOEXEC, 0) == -1 && errno == EOPNOTSUPP, "unsupported libnx fcntl cannot masquerade as a descriptor");
+    for (unsigned life = 0; life < 64; ++life) {
+        auto file = CreateFileW(W("sdmc:/switch/coreclr-pal-file-input.bin"), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(file != INVALID_HANDLE_VALUE, "PAL opens actual native test input");
+        unsigned char magic[2]; DWORD read = 0;
+        check(ReadFile(file, magic, sizeof(magic), &read, nullptr) && read == 2 && magic[0] == 'F' && magic[1] == 'I', "PAL reads real file contents");
+        auto mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        check(mapping != nullptr, "mapping duplicates a real native file description");
+        auto view = static_cast<const unsigned char*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4));
+        check(view != nullptr && memcmp(view, "FILE", 4) == 0, "PAL creates a real read-only file snapshot");
+        check(ReadFile(file, magic, 2, &read, nullptr) && read == 2 && magic[0] == 'L' && magic[1] == 'E', "mapping read preserves the shared native file cursor");
+        check(UnmapViewOfFile(view) && CloseHandle(file), "retire first view and original file handle");
+        view = static_cast<const unsigned char*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4));
+        check(view != nullptr && memcmp(view, "FILE", 4) == 0, "mapping remains usable after original file closes");
+        check(CloseHandle(mapping), "close mapping handle with live view");
+        auto control = CreateFileW(W("sdmc:/switch/coreclr-pal-file-input.bin"), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(control != INVALID_HANDLE_VALUE && UnmapViewOfFile(view), "retire last view while another file handle is alive");
+        check(ReadFile(control, magic, 2, &read, nullptr) && read == 2 && magic[0] == 'F', "mapping retirement did not close another descriptor");
+        check(CloseHandle(control), "retire final test file handle");
+    }
     check(unlink("sdmc:/switch/coreclr-pal-file-input.bin") == 0, "retire test-owned input");
 }
 int main(int argc, char** argv) {
