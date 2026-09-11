@@ -116,7 +116,12 @@ PhaseStatus Compiler::fgInsertGCPolls()
                 return BasicBlockVisit::Continue;
             });
         }
-        if (needsEntryPoll)
+        // Reverse P/Invoke entry already performs the native-to-cooperative
+        // transition and polls for suspension. Never place a managed poll in
+        // front of that transition: it would execute managed code while still
+        // preemptive, and a first-use JIT of PollGC can recursively reenter a
+        // managed compiler callback. Backward-edge polls above remain needed.
+        if (needsEntryPoll && !opts.IsReversePInvoke())
         {
             fgCreateNewInitBB();
             fgFirstBB->SetFlags(BBF_NEEDS_GCPOLL);

@@ -269,8 +269,10 @@ InitializeDefaultStackSize()
         }
     }
 
-#ifdef HOST_APPLE
+#if defined(HOST_APPLE) || defined(TARGET_LIBNX)
     // Match Windows stack size
+    // libnx's pthread default is only 128 KiB. Managed execution (including
+    // finalizers entering the JIT) needs a runtime-sized default instead.
     if (g_defaultStackSize == 0)
     {
         g_defaultStackSize = 1536 * 1024;
