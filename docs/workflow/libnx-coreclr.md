@@ -211,3 +211,20 @@ PAL_InitializeCoreCLR/PAL_Shutdown, suspended-thread startup, single-resume
 semantics, PAL events, retained exit records, kernel identities and the command
 channel. PAL shutdown retains its process-lifetime contract; this is not managed
 runtime initialization or an unload/restart interface.
+
+## Shared GC OS support
+
+CoreCLR and NativeAOT use `src/coreclr/gc/libnx/gcenv.libnx.cpp` for their Horizon
+OS interface, retaining the GC algorithms and event implementation. Advisory
+reset validates that the complete range is owned and committed without
+discarding accessible bytes. Affinity reconfiguration starts from the kernel's
+original allowed mask; the CPU index bound is one past its highest set bit.
+
+The [GC OS probe](../../src/coreclr/pal/tests/libnx/gc-os/README.md) exercises
+identity, affinity restoration, aligned reservation, commitment, reset and
+release through the shared nxvm allocator. It links native adapter objects,
+not a managed runtime.
+
+EventPipe selects its existing TCP transport with the default listener disabled
+on Horizon. GNU sincos declarations are enabled only for the arithmetic target,
+without changing feature visibility globally.
