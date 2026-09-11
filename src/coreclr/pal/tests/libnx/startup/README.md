@@ -9,9 +9,13 @@ snapshot reads preserve the shared native file cursor. From the runtime root:
 
 ```sh
 cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
-  --target coreclrminipal minipal coreclrpal_objects -- -j6
+  --target coreclrminipal minipal coreclrpal_objects RuntimeAsmHelpers -- -j6
 python3 src/coreclr/pal/tests/libnx/startup/build.py
 ```
+
+RuntimeAsmHelpers generates the NativeAOT AsmOffsets.inc included by the TLS
+assembly probe. Both runtime assembly TLS macros are compared with compiler
+TLS for address, initial value and writes on the main thread and workers.
 
 All objects in the current PAL target must exist. The script archives those
 objects and links the two minipal libraries using the staged SDK in CMakeCache.

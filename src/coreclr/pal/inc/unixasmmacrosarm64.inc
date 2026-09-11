@@ -352,6 +352,13 @@ C_FUNC(\Name\()_End):
     // End of the sequence
 
     mov     \target, x0
+#elif defined(TARGET_LIBNX)
+    // Match devkitA64 -mtp=soft and the static NRO TLS layout. libnx's
+    // compiler ABI accessor preserves every register except x0. Do not read
+    // Linux TPIDR_EL0 or copy libnx's private ThreadVars offsets here.
+    bl      C_FUNC(__aarch64_read_tp)
+    add     \target, x0, #:tprel_hi12:\var
+    add     \target, \target, #:tprel_lo12_nc:\var
 #else
     adrp    x0, :tlsdesc:\var
     ldr     \target, [x0, #:tlsdesc_lo12:\var]

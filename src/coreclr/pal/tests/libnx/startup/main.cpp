@@ -10,6 +10,9 @@ extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/arm/counter.h>
 unsigned __nx_applet_exit_mode = 1;
+__thread uintptr_t ProbeTlsValue = 0xabc123;
+uintptr_t* ProbeAssemblyTls();
+uintptr_t* ProbeNativeAotAssemblyTls();
 __attribute__((visibility("default"), used, noinline)) unsigned ModuleProbeFunction(unsigned value) { return value * 7 + 3; }
 __attribute__((visibility("default"), used)) unsigned ModuleProbeData = 0x12345678;
 __attribute__((visibility("hidden"), used)) unsigned ModuleProbeHidden = 123;
@@ -20,7 +23,14 @@ static void check(bool yes, const char* name) {
     unsigned count = ++checks;
     if (!yes) { fprintf(output, "FAIL %s check=%u pal_error=%u errno=%d native_error=%s\n", name, count, GetLastError(), errno, NativeModuleError()); abort(); }
 }
+static void testAssemblyTls() {
+    check(ProbeAssemblyTls() == &ProbeTlsValue && *ProbeAssemblyTls() == 0xabc123, "assembly TLS agrees with compiler TLS on a fresh thread");
+    check(ProbeNativeAotAssemblyTls() == &ProbeTlsValue && *ProbeNativeAotAssemblyTls() == 0xabc123, "NativeAOT assembly TLS agrees with compiler TLS");
+    *ProbeAssemblyTls() = reinterpret_cast<uintptr_t>(&ProbeTlsValue);
+    check(*ProbeNativeAotAssemblyTls() == reinterpret_cast<uintptr_t>(&ProbeTlsValue), "assembly TLS write reaches this thread's actual variable");
+}
 static void* worker(void*) {
+    testAssemblyTls();
     for (unsigned i = 0; i < 64; ++i) {
         auto handle = PAL_LoadLibraryDirect(nullptr);
         check(handle != nullptr, "open real resident module");
@@ -78,6 +88,7 @@ static void testChannel() {
 }
 struct PalWork { HANDLE ready; HANDLE finish; DWORD id; std::atomic<unsigned> calls{0}; };
 static DWORD palWorker(void* argument) {
+    testAssemblyTls();
     auto work = static_cast<PalWork*>(argument);
     uint64_t tid;
     check(svcGetThreadId(&tid, CUR_THREAD_HANDLE) == 0 && GetCurrentThreadId() == tid && work->id == tid, "PAL worker has actual kernel thread identity");
@@ -206,6 +217,7 @@ int main(int argc, char** argv) {
     uint64_t pid;
     check(svcGetProcessId(&pid, CUR_PROCESS_HANDLE) == 0 && GetCurrentProcessId() == pid, "PAL process identity matches Horizon");
     check(OpenProcess(0, FALSE, static_cast<DWORD>(pid + 1)) == nullptr && GetLastError() == ERROR_NOT_SUPPORTED, "foreign process handles explicitly unsupported");
+    testAssemblyTls();
     testFiles();
     testMemoryProbe();
     testChannel();

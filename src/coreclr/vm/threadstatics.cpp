@@ -924,6 +924,9 @@ bool CanJITOptimizeTLSAccess()
     // Optimization is disabled for linux musl arm64
 #elif defined(TARGET_FREEBSD) && defined(TARGET_ARM64)
     // Optimization is disabled for FreeBSD/arm64
+#elif defined(TARGET_LIBNX)
+    // JIT TLS expansion assumes Linux TPIDR_EL0. Keep the ordinary runtime
+    // helpers, compiled with the native soft thread-pointer ABI, on Horizon.
 #elif defined(TARGET_ANDROID)
     // Optimation is disabled for Android until emulated TLS is supported.
 #elif !defined(TARGET_APPLE) && defined(TARGET_UNIX) && defined(TARGET_ARM64)

@@ -34,9 +34,11 @@ output = repo / 'artifacts/libnx-coreclr-startup'
 output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS']
 objects = []
-for unit in [source / 'main.cpp']:
+for unit in [source / 'main.cpp', source / 'tls.S', source / 'tls-nativeaot.S']:
     obj = output / (unit.stem + '.o')
     unit_flags = compile_flags if unit.suffix == '.cpp' else flags['ASM_DEFINES'] + flags['ASM_INCLUDES'] + flags['ASM_FLAGS']
+    if unit.name == 'tls-nativeaot.S':
+        unit_flags += ['-I' + str(build / 'nativeaot/Runtime/Full')]
     subprocess.run([str(compiler), *unit_flags, '-c', str(unit), '-o', str(obj)], check=True)
     objects.append(str(obj))
 # Use production objects from the current PAL build. Package them as an archive
