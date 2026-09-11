@@ -12,7 +12,13 @@
 #include <stdlib.h>
 #if defined(TARGET_LIBNX)
 #include <errno.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <switch/kernel/svc.h>
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 #if defined(__linux__)

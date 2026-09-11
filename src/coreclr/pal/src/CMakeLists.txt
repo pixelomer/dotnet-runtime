@@ -220,7 +220,14 @@ if(CLR_CMAKE_TARGET_LIBNX)
   add_definitions(-DDONT_SET_RLIMIT_NOFILE)
   list(REMOVE_ITEM SOURCES map/virtual.cpp exception/signal.cpp)
   list(APPEND ARCH_SOURCES exception/libnx/exceptions.S)
-  list(APPEND SOURCES exception/libnx/exceptions.cpp thread/libnx/threadplatform.cpp exception/libnx/unwind.cpp map/libnx/virtual.cpp map/libnx/mapping.cpp map/libnx/pread.c
+  list(APPEND SOURCES
+    exception/libnx/exceptions.cpp
+    exception/libnx/unwind.cpp
+    loader/libnx/module.cpp
+    thread/libnx/threadplatform.cpp
+    map/libnx/virtual.cpp
+    map/libnx/mapping.cpp
+    map/libnx/pread.c
     ${CLR_SRC_NATIVE_DIR}/libs/Common/nxvm.c
     ${CLR_SRC_NATIVE_DIR}/libs/Common/pal_threading_libnx.c
     ${CLR_SRC_NATIVE_DIR}/libs/Common/libnx_threads.c)

@@ -37,18 +37,17 @@ SET_DEFAULT_DEBUG_CHANNEL(LOADER); // some headers have code with asserts, so do
 #include <errno.h>
 #include <string.h>
 #include <limits.h>
-#include <dlfcn.h>
+#include "pal/modulenative.h"
 #include <stdlib.h>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
-#else
+#elif !defined(TARGET_LIBNX)
 #include <link.h>
 #endif // __APPLE__
 
 #include <sys/types.h>
-#include <sys/mman.h>
 
 #if HAVE_GNU_LIBNAMES_H
 #include <gnu/lib-names.h>
@@ -276,7 +275,7 @@ GetProcAddress(
             goto done;
         }
 
-        ProcAddress = (FARPROC) dlsym(module->dl_handle, lpPALProcName);
+        ProcAddress = (FARPROC) NativeModuleSymbol(module->dl_handle, lpPALProcName);
         symbolName = lpPALProcName;
     }
 
@@ -284,7 +283,7 @@ GetProcAddress(
     // inside the PAL, fall back to a normal search.
     if (ProcAddress == nullptr)
     {
-        ProcAddress = (FARPROC) dlsym(module->dl_handle, lpProcName);
+        ProcAddress = (FARPROC) NativeModuleSymbol(module->dl_handle, lpProcName);
     }
 
     if (ProcAddress)
@@ -295,10 +294,10 @@ GetProcAddress(
         /* if we don't know the module's full name yet, this is our chance to obtain it */
         if (!module->lib_name && module->dl_handle)
         {
-            Dl_info dl_info;
-            if (dladdr((LPVOID)ProcAddress, &dl_info) != 0)
+            NativeModuleInfo dl_info;
+            if (NativeModuleFromAddress((LPVOID)ProcAddress, &dl_info) != 0)
             {
-                const char* libName = dl_info.dli_fname;
+                const char* libName = dl_info.name;
                 module->lib_name = UTIL_MBToWC_Alloc(libName, -1);
                 if (nullptr == module->lib_name)
                 {
@@ -312,7 +311,7 @@ GetProcAddress(
             }
             else
             {
-                TRACE("GetProcAddress: dladdr() call failed!\n");
+                TRACE("GetProcAddress: NativeModuleFromAddress() call failed!\n");
             }
         }
     }
@@ -542,7 +541,7 @@ PAL_LoadLibraryDirect(
     // Getting nullptr as name indicates redirection to current library
     if (lpLibFileName == nullptr)
     {
-        dl_handle = dlopen(NULL, RTLD_LAZY);
+        dl_handle = NativeOpenModule(NULL);
         goto done;
     }
 
@@ -589,7 +588,7 @@ PAL_FreeLibraryDirect(
     PERF_ENTRY(PAL_FreeLibraryDirect);
     ENTRY("PAL_FreeLibraryDirect (dl_handle=%p) \n", dl_handle);
 
-    retValue = dlclose(dl_handle) == 0;
+    retValue = NativeCloseModule(dl_handle) == 0;
 
     LOGEXIT("PAL_FreeLibraryDirect returns BOOL %p\n", retValue);
     PERF_EXIT(PAL_FreeLibraryDirect);
@@ -633,7 +632,7 @@ PAL_GetProcAddressDirect(
           lpProcName ? lpProcName : "NULL",
           lpProcName ? lpProcName : "NULL");
 
-    address = (FARPROC) dlsym(dl_handle, lpProcName);
+    address = (FARPROC) NativeModuleSymbol(dl_handle, lpProcName);
 
     LOGEXIT("PAL_GetProcAddressDirect returns FARPROC %p\n", address);
     PERF_EXIT(PAL_GetProcAddressDirect);
@@ -838,10 +837,10 @@ PAL_GetSymbolModuleBase(PVOID symbol)
     }
     else
     {
-        Dl_info info;
-        if (dladdr(symbol, &info) != 0)
+        NativeModuleInfo info;
+        if (NativeModuleFromAddress(symbol, &info) != 0)
         {
-            retval = info.dli_fbase;
+            retval = info.base;
         }
         else
         {
@@ -926,6 +925,36 @@ PAL_CopyModuleData(PVOID moduleBase, PVOID destinationBufferStart, PVOID destina
     }
     return param.result;
 }
+#elif defined(TARGET_LIBNX)
+PALIMPORT
+int
+PALAPI
+PAL_CopyModuleData(PVOID moduleBase, PVOID destinationBufferStart, PVOID destinationBufferEnd)
+{
+    NativeModuleRange ranges[3];
+    if (!NativeModuleRanges(moduleBase, ranges)) {
+        SetLastError(ERROR_INVALID_DATA);
+        return 0;
+    }
+    CopyModuleDataParam param{};
+    param.module_base = static_cast<uint8_t*>(moduleBase);
+    param.destination_buffer_start = static_cast<uint8_t*>(destinationBufferStart);
+    param.destination_buffer_end = static_cast<uint8_t*>(destinationBufferEnd);
+    // Validate all ranges before copying any bytes. NROs have native segment
+    // metadata, not in-memory ELF program headers.
+    for (auto& range : ranges) {
+        size_t end = reinterpret_cast<uintptr_t>(range.start) - reinterpret_cast<uintptr_t>(moduleBase) + range.size;
+        if (end > INT_MAX || (destinationBufferStart &&
+            (reinterpret_cast<uintptr_t>(destinationBufferEnd) < reinterpret_cast<uintptr_t>(destinationBufferStart) ||
+             end > reinterpret_cast<uintptr_t>(destinationBufferEnd) - reinterpret_cast<uintptr_t>(destinationBufferStart)))) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+    }
+    for (auto& range : ranges)
+        handle_image_range(static_cast<uint8_t*>(range.start), range.size, &param);
+    return param.result;
+}
 #elif defined(TARGET_WASM)
 // WASM-TODO: get rid of whole module loading on wasm
 PALIMPORT
@@ -974,11 +1003,11 @@ PAL_CopyModuleData(PVOID moduleBase, PVOID destinationBufferStart, PVOID destina
 /*++
     PAL_GetLoadLibraryError
 
-    Wrapper for dlerror() to be used by PAL functions
+    Wrapper for NativeModuleError() to be used by PAL functions
 
 Return value:
 
-A LPCSTR containing the output of dlerror()
+A LPCSTR containing the output of NativeModuleError()
 
 --*/
 PALIMPORT
@@ -990,7 +1019,7 @@ PAL_GetLoadLibraryError()
     PERF_ENTRY(PAL_GetLoadLibraryError);
     ENTRY("PAL_GetLoadLibraryError");
 
-    LPCSTR last_error = dlerror();
+    LPCSTR last_error = NativeModuleError();
 
     LOGEXIT("PAL_GetLoadLibraryError returns %p\n", last_error);
     PERF_EXIT(PAL_GetLoadLibraryError);
@@ -1025,7 +1054,7 @@ BOOL LOADInitializeModules()
     TRACE("Initializing module for main executable\n");
 
     exe_module.self = (HMODULE)&exe_module;
-    exe_module.dl_handle = dlopen(nullptr, RTLD_LAZY);
+    exe_module.dl_handle = NativeOpenModule(nullptr);
 #ifndef TARGET_WASM // wasm does not support shared libraries
     if (exe_module.dl_handle == nullptr)
     {
@@ -1037,7 +1066,7 @@ BOOL LOADInitializeModules()
     exe_module.refcount = -1;
     exe_module.next = &exe_module;
     exe_module.prev = &exe_module;
-    exe_module.pDllMain = (PDLLMAIN)dlsym(exe_module.dl_handle, "DllMain");
+    exe_module.pDllMain = (PDLLMAIN)NativeModuleSymbol(exe_module.dl_handle, "DllMain");
     exe_module.hinstance = (HINSTANCE)&exe_module;
     exe_module.threadLibCalls = TRUE;
     return TRUE;
@@ -1228,7 +1257,7 @@ static BOOL LOADFreeLibrary(MODSTRUCT *module, BOOL fCallDllMain)
         goto done;
     }
 
-    /* Releasing the last reference : call dlclose(), remove module from the
+    /* Releasing the last reference : call NativeCloseModule(), remove module from the
        process-wide module list */
 
     TRACE("Reference count for module %p (named %S) now 0; destroying module structure\n",
@@ -1249,7 +1278,7 @@ static BOOL LOADFreeLibrary(MODSTRUCT *module, BOOL fCallDllMain)
 
     if (module->hinstance)
     {
-        PUNREGISTER_MODULE unregisterModule = (PUNREGISTER_MODULE)dlsym(module->dl_handle, "PAL_UnregisterModule");
+        PUNREGISTER_MODULE unregisterModule = (PUNREGISTER_MODULE)NativeModuleSymbol(module->dl_handle, "PAL_UnregisterModule");
         if (unregisterModule != nullptr)
         {
              unregisterModule(module->hinstance);
@@ -1257,10 +1286,10 @@ static BOOL LOADFreeLibrary(MODSTRUCT *module, BOOL fCallDllMain)
         module->hinstance = nullptr;
     }
 
-    if (module->dl_handle && 0 != dlclose(module->dl_handle))
+    if (module->dl_handle && 0 != NativeCloseModule(module->dl_handle))
     {
-        /* report dlclose() failure, but proceed anyway. */
-        WARN("dlclose() call failed!\n");
+        /* report NativeCloseModule() failure, but proceed anyway. */
+        WARN("NativeCloseModule() call failed!\n");
     }
 
     /* release all memory */
@@ -1516,13 +1545,13 @@ static NATIVE_LIBRARY_HANDLE LOADLoadLibraryDirect(LPCSTR libraryNameOrPath)
     // Getting nullptr as name indicates redirection to current library
     if (libraryNameOrPath == nullptr)
     {
-        dl_handle = dlopen(NULL, RTLD_LAZY);
+        dl_handle = NativeOpenModule(NULL);
     }
     else
     {
         _ASSERTE(libraryNameOrPath != nullptr);
         _ASSERTE(libraryNameOrPath[0] != '\0');
-        dl_handle = dlopen(libraryNameOrPath, RTLD_LAZY);
+        dl_handle = NativeOpenModule(libraryNameOrPath);
     }
 
     if (dl_handle == nullptr)
@@ -1626,7 +1655,7 @@ static MODSTRUCT *LOADAddModule(NATIVE_LIBRARY_HANDLE dl_handle, LPCSTR libraryN
             {
                 module->refcount++;
             }
-            dlclose(dl_handle);
+            NativeCloseModule(dl_handle);
             *pIsAlreadyLoaded = TRUE;
             return module;
         }
@@ -1642,12 +1671,12 @@ static MODSTRUCT *LOADAddModule(NATIVE_LIBRARY_HANDLE dl_handle, LPCSTR libraryN
     {
         ERROR("couldn't create new module\n");
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        dlclose(dl_handle);
+        NativeCloseModule(dl_handle);
         return nullptr;
     }
 
     /* We now get the address of DllMain if the module contains one. */
-    module->pDllMain = (PDLLMAIN)dlsym(module->dl_handle, "DllMain");
+    module->pDllMain = (PDLLMAIN)NativeModuleSymbol(module->dl_handle, "DllMain");
 
     /* Add the new module on to the end of the list */
     module->prev = exe_module.prev;
@@ -1697,7 +1726,7 @@ static HMODULE LOADRegisterLibraryDirect(NATIVE_LIBRARY_HANDLE dl_handle, LPCSTR
 
             if (nullptr == module->hinstance)
             {
-                PREGISTER_MODULE registerModule = (PREGISTER_MODULE)dlsym(module->dl_handle, "PAL_RegisterModule");
+                PREGISTER_MODULE registerModule = (PREGISTER_MODULE)NativeModuleSymbol(module->dl_handle, "PAL_RegisterModule");
                 if (registerModule != nullptr)
                 {
                     module->hinstance = registerModule(libraryNameOrPath);
@@ -1814,17 +1843,17 @@ MODSTRUCT *LOADGetPalLibrary()
         // this function for the coreclr path.
         TRACE("Loading module for PAL library\n");
 
-        Dl_info info;
-        if (dladdr((PVOID)&LOADGetPalLibrary, &info) == 0)
+        NativeModuleInfo info;
+        if (NativeModuleFromAddress((PVOID)&LOADGetPalLibrary, &info) == 0)
         {
-            ERROR("LOADGetPalLibrary: dladdr() failed.\n");
+            ERROR("LOADGetPalLibrary: NativeModuleFromAddress() failed.\n");
             goto exit;
         }
         // Stash a copy of the CoreCLR installation path in a global variable.
         // Make sure it's terminated with a slash.
         if (g_szCoreCLRPath == nullptr)
         {
-            size_t  cbszCoreCLRPath = strlen(info.dli_fname) + 1;
+            size_t  cbszCoreCLRPath = strlen(info.name) + 1;
             g_szCoreCLRPath = (char*) malloc(cbszCoreCLRPath);
 
             if (g_szCoreCLRPath == nullptr)
@@ -1833,7 +1862,7 @@ MODSTRUCT *LOADGetPalLibrary()
                 goto exit;
             }
 
-            if (strcpy_s(g_szCoreCLRPath, cbszCoreCLRPath, info.dli_fname) != SAFECRT_SUCCESS)
+            if (strcpy_s(g_szCoreCLRPath, cbszCoreCLRPath, info.name) != SAFECRT_SUCCESS)
             {
                 ERROR("LOADGetPalLibrary: strcpy_s failed!");
                 goto exit;
@@ -1846,7 +1875,7 @@ MODSTRUCT *LOADGetPalLibrary()
         }
         else
         {
-            pal_module = (MODSTRUCT*)LOADLoadLibrary(info.dli_fname, FALSE);
+            pal_module = (MODSTRUCT*)LOADLoadLibrary(info.name, FALSE);
         }
     }
 
