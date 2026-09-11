@@ -35,6 +35,8 @@ bool GCToOSInterface::Initialize()
 {
     u64 coreMask;
     if (R_FAILED(svcGetInfo(&coreMask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0))) return false;
+    // .NET 10 AffinitySet owns dynamic storage; size it for every kernel mask bit.
+    if (!s_affinity.Initialize(64)) return false;
     s_cpuCount = 0;
     for (unsigned i = 0; i < 64; ++i)
         if (coreMask & (uint64_t(1) << i)) { s_affinity.Add(i); ++s_cpuCount; }

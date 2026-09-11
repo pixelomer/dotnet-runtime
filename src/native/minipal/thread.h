@@ -12,15 +12,7 @@
 #include <stdlib.h>
 #if defined(TARGET_LIBNX)
 #include <errno.h>
-// thread.h declares libnx Thread, which collides with the runtime Thread.
-// Match the public libnx Handle-returning C declaration without that type.
-#ifdef __cplusplus
-extern "C" {
-#endif
-uint32_t threadGetCurHandle(void);
-#ifdef __cplusplus
-}
-#endif
+#include <switch/kernel/svc.h>
 #endif
 
 #if defined(__linux__)
@@ -77,7 +69,9 @@ static inline size_t minipal_get_current_thread_id_no_cache(void)
 #elif defined(__sun)
     tid = (size_t)pthread_self();
 #elif defined(TARGET_LIBNX)
-    tid = (size_t)threadGetCurHandle();
+    uint64_t thread_id;
+    if (svcGetThreadId(&thread_id, CUR_THREAD_HANDLE) != 0) return 0;
+    tid = (size_t)thread_id;
 #elif defined(__wasm)
     tid = (size_t)(void*)pthread_self();
 #else

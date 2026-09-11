@@ -323,9 +323,6 @@ public:
     virtual bool Destroy() { return m_event.Destroy(); }
 };
 
-// This wrapper borrows libnx's actual handle. The owning pthread must remain
-// alive until RuntimeThreadShutdown detaches it; closing this wrapper must not
-// close the libnx-owned kernel handle.
 void InitializeCurrentProcessCpuCount()
 {
     uint32_t count;
@@ -802,3 +799,14 @@ bool PalSetCurrentThreadName(const char*)
 {
     return false; // No pthread naming API in this libnx/newlib target.
 }
+
+#ifdef FEATURE_HIJACK
+HijackFunc* PalGetHijackTarget(HijackFunc* defaultTarget)
+{
+    return defaultTarget;
+}
+void PalHijack(Thread* thread)
+{
+    thread->TrySuspendForGcOnLibnx();
+}
+#endif

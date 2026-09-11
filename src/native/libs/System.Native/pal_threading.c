@@ -305,10 +305,6 @@ uint64_t SystemNative_GetUInt64OSThreadId(void)
 // Returns (uint32_t)-1 when the implementation does not know how to get the OS thread ID.
 uint32_t SystemNative_TryGetUInt32OSThreadId(void)
 {
-#if defined(TARGET_LIBNX)
-    return (uint32_t)threadGetCurHandle();
-#else
     uint32_t result = (uint32_t)minipal_get_current_thread_id();
     return result == 0 ? (uint32_t)-1 : result;
-#endif
 }
