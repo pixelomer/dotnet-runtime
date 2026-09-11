@@ -47,3 +47,12 @@ the pthread handle. This contract differs from Mono's managed-thread path and
 requires separate handling because libnx ignores the pthread detach state.
 The NativeAOT reaper handles that API; Mono's managed Thread.Join path has its
 own ownership and reclamation contract.
+
+## TLS container lifetime
+
+The Horizon implementation in `src/mono/mono/utils/mono-tls.c` keeps its
+multiplexed TLS container visible while destructors run. It clears each value
+before invoking its destructor and permits up to four passes for values restored
+by callbacks. After those passes it clears the native slot and frees the container.
+Reading an unset value or assigning null does not allocate a container. This
+ownership contract is independent of LLVM code generation.
