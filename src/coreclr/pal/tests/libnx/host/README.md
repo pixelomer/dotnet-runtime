@@ -123,3 +123,26 @@ CoreLib. Missing managed imports or invalid native table entries fail the build.
 The generated report is `qcall-validation.json` in the selected output directory.
 It contains input fingerprints, import counts and missing names for the current
 build. This is a metadata contract check, not a behavioral test of every entry.
+
+## Async socket probe
+
+After building the platform framework with the libs.sfx command above, use:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/host/build.py \
+  --probe sockets --output artifacts/libnx-coreclr-sockets
+```
+
+The loopback workload exercises send backpressure, async operation cancellation
+and close/descriptor reuse with the same finite native watchdog. The host
+initializes BSD with sb_efficiency=8 and retains it until process exit.
+It does not alter network settings.
+
+`--framework PATH` optionally selects a compatible source-built framework
+directory instead of `artifacts/bin/runtime/net10.0-libnx-Release-arm64`.
+Keep its assemblies together with matching CoreLib; the helper copies framework
+DLLs except CoreLib and Probe.dll. Deploy the complete generated managed
+directory as described above.
+
+The [NativeAOT counterpart](../../../../nativeaot/Runtime/libnx/tests/networking-async/README.md)
+uses the same SocketProbe.cs and explicitly selects the Horizon socket assembly.

@@ -27,7 +27,7 @@ Applications using full globalization must load `icudt77l.dat` with
 `udata_setCommonData` before managed entry and retain it until process exit.
 Linking ICU archives alone does not supply this data.
 
-The inherited `build-sockets.py`, SDK packager/validator and other probe build
-recipes target .NET 9.0.3 at this point in the branch. Use
+The inherited `build-sockets.py`, SDK packager/validator and synchronous
+networking recipes target .NET 9.0.3 at this point in the branch. Use
 `horizon-net9-nativeaot` for those recipes. The managed stress probe above is
 versioned for .NET 10; the .NET 9 package must not be used as its runtime input.

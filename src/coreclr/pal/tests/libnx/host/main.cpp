@@ -12,6 +12,11 @@ extern "C" {
 #include <switch/arm/counter.h>
 }
 #endif
+#ifdef HOST_SOCKET_PROBE
+extern "C" {
+#include <switch.h>
+}
+#endif
 #ifdef HOST_SUSPENSION_PROBE
 static int suspensionControl[4]; // stop, timed out, armed generation (-1 exits), completed generation
 static uint64_t suspensionStart;
@@ -108,6 +113,14 @@ int main(int argc, char** argv)
     setenv("DOTNET_JitDisasm", "*", 1);
     setenv("DOTNET_JitDisasmSummary", "1", 1);
     setenv("DOTNET_JitDisasmWithCodeBytes", "1", 1);
+#endif
+#ifdef HOST_SOCKET_PROBE
+    SocketInitConfig socketConfig = *socketGetDefaultInitConfig();
+    socketConfig.sb_efficiency = 8;
+    Result socketResult = socketInitialize(&socketConfig);
+    fprintf(output, "SOCKET_INIT result=%08x sb_efficiency=%u\n", socketResult, socketConfig.sb_efficiency);
+    if (R_FAILED(socketResult)) return 1;
+    // The socket engine is a background thread. BSD remains alive until exit.
 #endif
     coreclr_set_error_writer(error_writer);
     void* host = nullptr;

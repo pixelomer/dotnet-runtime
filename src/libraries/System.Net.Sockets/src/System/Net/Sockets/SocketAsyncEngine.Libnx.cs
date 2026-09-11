@@ -61,7 +61,6 @@ namespace System.Net.Sockets
         }
 
         private readonly Interop.Sys.SocketEvent* _buffer;
-        private uint _poolCookie;
 
         //
         // Maps handle values to SocketAsyncContext instances.
@@ -117,10 +116,6 @@ namespace System.Net.Sockets
                     throw new InvalidOperationException(SR.net_sockets_libnx_handle_already_registered);
                 }
                 _handleList.Add(socketHandle);
-                unchecked
-                {
-                    ++_poolCookie;
-                }
             }
 
             Log($"SocketAyncEngine: Adding socket handle {socketHandle}");
@@ -146,7 +141,6 @@ namespace System.Net.Sockets
                         {
                             engine._handleToContextMap.TryRemove(socketHandle, out _);
                             engine._handleList.RemoveAt(i);
-                            unchecked { ++engine._poolCookie; }
                             return;
                         }
                     }
@@ -191,101 +185,7 @@ namespace System.Net.Sockets
                 SocketEventHandler handler = new SocketEventHandler(this);
                 while (true)
                 {
-                    Interop.PollEvent[] events;
-                    uint cookie;
-
-                    lock (_handleList)
-                    {
-                        cookie = _poolCookie;
-                        events = new Interop.PollEvent[_handleList.Count];
-                        for (int i = 0; i < _handleList.Count; i++)
-                        {
-                            var write = true;
-                                                            // We should set POLLOUT only if we want to send data, this is an attempt at getting this info from the context but it's just a guess, might not be correct.
-                            if (_handleToContextMap.TryGetValue(_handleList[i], out var thisCtx))
-                                write = thisCtx.Context.HasPendingWrites;
-
-                            events[i] = new Interop.PollEvent
-                            {
-                                FileDescriptor = (int)_handleList[i],
-                                Events = write ?
-                                    Interop.PollEvents.POLLIN | Interop.PollEvents.POLLOUT | Interop.PollEvents.POLLERR | Interop.PollEvents.POLLHUP :
-                                    Interop.PollEvents.POLLIN | Interop.PollEvents.POLLERR | Interop.PollEvents.POLLHUP
-                            };
-                        }
-                    }
-
-                    if (events.Length == 0)
-                    {
-                        // No sockets to poll, wait for a while before checking again.
-                        Thread.Sleep(50);
-                        continue;
-                    }
-
-                    fixed (Interop.PollEvent* eventsPtr = events)
-                    {
-                        // Poll until we have events to process or the pool cookie changes.
-                        uint triggered = 0;
-                        while (cookie == Volatile.Read(ref _poolCookie))
-                        {
-                            Log($"SocketAyncEngine: doing poll with {events.Length} sockets");
-                            triggered = 0;
-                            var error = Interop.Sys.Poll(eventsPtr, (uint)events.Length, 60, &triggered);
-                            if (error != Interop.Error.SUCCESS && error != Interop.Error.EAGAIN)
-                            {
-                                // Probably a socket was closed and we got an error, it should get unregistered in the next iteration.
-                                if (error == Interop.Error.EBADF)
-                                    Log($"SocketAyncEngine: got EBADF, ignoring.");
-                                else
-                                    throw new InternalException(error);
-                            }
-
-                            if (triggered > 0)
-                            {
-                                // We have events to process, break out of the loop.
-                                break;
-                            }
-                        }
-
-                        Log($"SocketAyncEngine: Poll loop done triggered={triggered} cookie={cookie} _poolCookie={_poolCookie}");
-
-                        if (triggered == 0)
-                        {
-                            // No events triggered, the cookie must have changed, continue to the next iteration.
-                            continue;
-                        }
-                    }
-
-                    int populatedEvents = 0;
-                    foreach (var e in events)
-                    {
-                        if ((short)e.TriggeredEvents != 0 && _handleToContextMap.ContainsKey(e.FileDescriptor))
-                        {
-                            Log($"SocketAyncEngine: Socket {e.FileDescriptor} triggered event {e.TriggeredEvents}");
-                            handler.Buffer[populatedEvents] = default;
-                            handler.Buffer[populatedEvents].Data = e.FileDescriptor;
-                            if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLIN)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Read;
-                            if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLOUT)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Write;
-                            if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLERR)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Error;
-                            if (e.TriggeredEvents.HasFlag(Interop.PollEvents.POLLHUP)) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Close;
-                            ++populatedEvents;
-
-                            if (populatedEvents == EventBufferCount)
-                                break;
-                        }
-                    }
-
-                    if (populatedEvents == 0)
-                    {
-                        // The original code has an assert here. However it's possible that a poll was triggered for a socket that was removed from the list
-                        // If this happens, we might get 0 events since we ignore such sockets with _handleToContextMap.ContainsKey.
-                        // Ignore this condition and try polling again.
-                        continue;
-                    }
-
-                    // Only enqueue a work item if the stage is NotScheduled.
-                    // Otherwise there must be a work item already queued or another thread already handling parallelization.
-                    if (handler.HandleSocketEvents(populatedEvents) &&
+                    if (PollAndHandleSocketEvents(handler) &&
                         Interlocked.Exchange(
                             ref _eventQueueProcessingStage,
                             EventQueueProcessingStage.Scheduled) == EventQueueProcessingStage.NotScheduled)
@@ -298,6 +198,81 @@ namespace System.Net.Sockets
             {
                 Environment.FailFast("Exception thrown from SocketAsyncEngine event loop: " + e.ToString(), e);
             }
+        }
+
+        // Bound the lifetime of context snapshots to a single poll. An idle
+        // event thread must not keep a removed registration alive indefinitely.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool PollAndHandleSocketEvents(SocketEventHandler handler)
+        {
+            Interop.PollEvent[] events;
+            SocketAsyncContextWrapper[] registrations;
+            lock (_handleList)
+            {
+                events = new Interop.PollEvent[_handleList.Count];
+                registrations = new SocketAsyncContextWrapper[events.Length];
+                for (int i = 0; i < events.Length; i++)
+                {
+                    SocketAsyncContextWrapper registration = _handleToContextMap[_handleList[i]];
+                    registrations[i] = registration;
+                    events[i] = new Interop.PollEvent
+                    {
+                        FileDescriptor = (int)_handleList[i],
+                        Events = Interop.PollEvents.POLLIN | Interop.PollEvents.POLLERR | Interop.PollEvents.POLLHUP |
+                            (registration.Context.HasPendingWrites ? Interop.PollEvents.POLLOUT : 0)
+                    };
+                }
+            }
+
+            if (events.Length == 0)
+            {
+                Thread.Sleep(50);
+                return false;
+            }
+
+            uint triggered = 0;
+            fixed (Interop.PollEvent* eventsPtr = events)
+            {
+                // Queueing an operation does not register a new socket. Refresh
+                // interests after EVERY bounded poll, including a timeout, or
+                // a later write can be stranded behind a read-only snapshot.
+                Interop.Error error = Interop.Sys.Poll(eventsPtr, (uint)events.Length, 60, &triggered);
+                if (error != Interop.Error.SUCCESS)
+                {
+                    if (error == Interop.Error.EBADF || error == Interop.Error.EAGAIN || error == Interop.Error.EINTR)
+                        return false;
+                    throw new InternalException(error);
+                }
+            }
+
+            bool enqueuedEvent = false;
+            int populatedEvents = 0;
+            for (int i = 0; i < events.Length; ++i)
+            {
+                Interop.PollEvent e = events[i];
+                if ((short)e.TriggeredEvents == 0 ||
+                    !_handleToContextMap.TryGetValue(e.FileDescriptor, out SocketAsyncContextWrapper current) ||
+                    !ReferenceEquals(current.Context, registrations[i].Context))
+                    continue;
+
+                // The event belongs to the captured registration, not whichever
+                // socket may later acquire the same descriptor number.
+                handler.Buffer[populatedEvents] = default;
+                handler.Buffer[populatedEvents].Data = i;
+                if ((e.TriggeredEvents & Interop.PollEvents.POLLIN) != 0) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Read;
+                if ((e.TriggeredEvents & Interop.PollEvents.POLLOUT) != 0) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Write;
+                if ((e.TriggeredEvents & Interop.PollEvents.POLLERR) != 0) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Error;
+                if ((e.TriggeredEvents & Interop.PollEvents.POLLHUP) != 0) handler.Buffer[populatedEvents].Events |= Interop.Sys.SocketEvents.Close;
+                ++populatedEvents;
+                if (populatedEvents == EventBufferCount)
+                {
+                    enqueuedEvent |= handler.HandleSocketEvents(populatedEvents, registrations);
+                    populatedEvents = 0;
+                }
+            }
+            if (populatedEvents != 0)
+                enqueuedEvent |= handler.HandleSocketEvents(populatedEvents, registrations);
+            return enqueuedEvent;
         }
 
         private void UpdateEventQueueProcessingStage(bool isEventQueueEmpty)
@@ -402,39 +377,34 @@ namespace System.Net.Sockets
         {
             public Interop.Sys.SocketEvent* Buffer { get; }
 
-            private readonly ConcurrentDictionary<IntPtr, SocketAsyncContextWrapper> _handleToContextMap;
             private readonly ConcurrentQueue<SocketIOEvent> _eventQueue;
 
             public SocketEventHandler(SocketAsyncEngine engine)
             {
                 Buffer = engine._buffer;
-                _handleToContextMap = engine._handleToContextMap;
                 _eventQueue = engine._eventQueue;
             }
 
             [MethodImpl(MethodImplOptions.NoInlining)]
-            public bool HandleSocketEvents(int numEvents)
+            public bool HandleSocketEvents(int numEvents, SocketAsyncContextWrapper[] registrations)
             {
                 bool enqueuedEvent = false;
                 foreach (var socketEvent in new ReadOnlySpan<Interop.Sys.SocketEvent>(Buffer, numEvents))
                 {
-                    if (_handleToContextMap.TryGetValue(socketEvent.Data, out SocketAsyncContextWrapper contextWrapper))
+                    SocketAsyncContext context = registrations[checked((int)socketEvent.Data)].Context;
+
+                    if (context.PreferInlineCompletions)
                     {
-                        SocketAsyncContext context = contextWrapper.Context;
+                        context.HandleEventsInline(socketEvent.Events);
+                    }
+                    else
+                    {
+                        Interop.Sys.SocketEvents events = context.HandleSyncEventsSpeculatively(socketEvent.Events);
 
-                        if (context.PreferInlineCompletions)
+                        if (events != Interop.Sys.SocketEvents.None)
                         {
-                            context.HandleEventsInline(socketEvent.Events);
-                        }
-                        else
-                        {
-                            Interop.Sys.SocketEvents events = context.HandleSyncEventsSpeculatively(socketEvent.Events);
-
-                            if (events != Interop.Sys.SocketEvents.None)
-                            {
-                                _eventQueue.Enqueue(new SocketIOEvent(context, events));
-                                enqueuedEvent = true;
-                            }
+                            _eventQueue.Enqueue(new SocketIOEvent(context, events));
+                            enqueuedEvent = true;
                         }
                     }
                 }

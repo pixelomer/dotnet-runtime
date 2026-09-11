@@ -77,3 +77,22 @@ The [native file-I/O probe](../../src/coreclr/nativeaot/Runtime/libnx/tests/file
 creates owned directories and children, verifies failure preserves a child,
 then retires them and checks missing-directory errors. This SDK behavior is
 shared by CoreCLR and NativeAOT.
+
+## Async socket interests and registration identity
+
+The shared socket engine refreshes interests after every bounded poll, including
+timeouts, so a queued send cannot remain behind an old read-only snapshot.
+Interrupted, transient and closed-descriptor polls retry with a fresh snapshot.
+
+Each snapshot retains its exact SocketAsyncContext registrations. Dispatch
+rejects replaced registrations and uses captured contexts rather than a later
+owner of the same descriptor. All triggered batches are processed even when
+the snapshot exceeds the event buffer. Snapshot references are confined to one
+non-inlined poll/dispatch call so idle polling cannot retain removed contexts
+indefinitely.
+
+The [CoreCLR host](../../src/coreclr/pal/tests/libnx/host/README.md) and
+[NativeAOT probe](../../src/coreclr/nativeaot/Runtime/libnx/tests/networking-async/README.md)
+compile the same loopback workload: queued writes under backpressure, async
+accept/connect/send/receive, cancellation and close with descriptor reuse.
+These bounded scenarios do not establish all socket lifetime or idle behavior.
