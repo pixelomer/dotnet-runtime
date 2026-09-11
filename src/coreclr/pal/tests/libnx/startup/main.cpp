@@ -153,6 +153,30 @@ static void testMemoryProbe() {
     check(mutex != nullptr && WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0, "unnamed mutex retains normal acquisition");
     check(ReleaseMutex(mutex) && CloseHandle(mutex), "unnamed mutex retains release and ownership retirement");
 }
+static void testFiles() {
+    char path[512];
+    check(GetFullPathNameA("sdmc:/switch/.././switch/missing-coreclr-probe.dll", sizeof(path), path, nullptr) &&
+          strcmp(path, "sdmc:/switch/missing-coreclr-probe.dll") == 0, "mounted absolute path is not prefixed with cwd");
+    check(GetFullPathNameA("sdmc:/../../switch/.", sizeof(path), path, nullptr) &&
+          strcmp(path, "sdmc:/switch") == 0, "mounted root survives parent normalization");
+    check(GetFullPathNameA("sdmc:/switch/..", sizeof(path), path, nullptr) &&
+          strcmp(path, "sdmc:/") == 0, "mounted trailing parent resolves to device root");
+    check(GetFullPathNameA("/switch/../switch", sizeof(path), path, nullptr) &&
+          strcmp(path, "/switch") == 0, "default device absolute path retains Unix spelling");
+    auto missing = CreateFileW(W("sdmc:/switch/missing-coreclr-probe.dll"), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(missing == INVALID_HANDLE_VALUE && GetLastError() == ERROR_FILE_NOT_FOUND, "missing mounted file has FILE_NOT_FOUND result");
+    // Close the native writer before opening the file through PAL: Horizon FS
+    // does not promise simultaneous read access to an active write handle.
+    FILE* seed = fopen("sdmc:/switch/coreclr-pal-file-input.bin", "wb");
+    check(seed != nullptr, "create native input for PAL file test");
+    check(fwrite("FILE", 1, 4, seed) == 4 && fclose(seed) == 0, "finish native input before PAL open");
+    auto file = CreateFileW(W("sdmc:/switch/coreclr-pal-file-input.bin"), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(file != INVALID_HANDLE_VALUE, "PAL opens actual native test input");
+    unsigned char magic[2]; DWORD read = 0;
+    check(ReadFile(file, magic, sizeof(magic), &read, nullptr) && read == 2 && magic[0] == 'F' && magic[1] == 'I', "PAL reads real file contents");
+    check(CloseHandle(file), "PAL closes real file handle");
+    check(unlink("sdmc:/switch/coreclr-pal-file-input.bin") == 0, "retire test-owned input");
+}
 int main(int argc, char** argv) {
     output = fopen("sdmc:/switch/coreclr-startup-probe.txt", "w");
     if (!output) return 1;
@@ -165,6 +189,7 @@ int main(int argc, char** argv) {
     uint64_t pid;
     check(svcGetProcessId(&pid, CUR_PROCESS_HANDLE) == 0 && GetCurrentProcessId() == pid, "PAL process identity matches Horizon");
     check(OpenProcess(0, FALSE, static_cast<DWORD>(pid + 1)) == nullptr && GetLastError() == ERROR_NOT_SUPPORTED, "foreign process handles explicitly unsupported");
+    testFiles();
     testMemoryProbe();
     testChannel();
     testPalThreads();

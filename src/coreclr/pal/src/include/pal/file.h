@@ -25,6 +25,7 @@ Revision History:
 #include <sys/types.h>
 #include <dirent.h>
 #include <glob.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -40,6 +41,18 @@ typedef struct _find_handle
     glob_t gGlob;
     char   **next;
 } find_obj;
+
+// Return the lexical root without requiring the path to exist. Horizon has
+// device-qualified roots as well as paths on the current default device.
+static inline const char* FILEGetPathRoot(const char* path)
+{
+    if (path[0] == '/') return path;
+#ifdef TARGET_LIBNX
+    for (const char* p = path; *p && *p != '/' && *p != '\\'; ++p)
+        if (*p == ':') return p != path && p[1] == '/' ? p + 1 : NULL;
+#endif
+    return NULL;
+}
 
 /*++
 FILECanonicalizePath

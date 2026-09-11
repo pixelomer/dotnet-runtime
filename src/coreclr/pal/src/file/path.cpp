@@ -72,7 +72,7 @@ GetFullPathNameA(
     }
 
     /* find out if lpFileName is a partial or full path */
-    if ('/' == *lpFileName)
+    if (FILEGetPathRoot(lpFileName) != nullptr)
     {
         fullPath = TRUE;
     }
@@ -498,6 +498,13 @@ Notes :
 --*/
 void FILECanonicalizePath(LPSTR lpUnixPath)
 {
+#ifdef TARGET_LIBNX
+    // Keep the device prefix intact, especially for root-level /../ and /..
+    // normalization. Reuse the existing lexical algorithm on the rooted tail.
+    const char* root = FILEGetPathRoot(lpUnixPath);
+    if (root != nullptr) lpUnixPath = const_cast<char*>(root);
+#endif
+
     LPSTR slashslashptr;
     LPSTR dotdotptr;
     LPSTR slashdotptr;

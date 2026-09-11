@@ -432,7 +432,7 @@ CreateDirectoryA(
 
 
     // Get an absolute path.
-    if (unixPathName[0] == '/')
+    if (FILEGetPathRoot(unixPathName) != nullptr)
     {
         realPathBuf = unixPathName;
     }
