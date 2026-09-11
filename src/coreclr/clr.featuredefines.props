@@ -2,6 +2,9 @@
     <PropertyGroup>
         <FeatureCoreCLR>true</FeatureCoreCLR>
         <FeaturePerfTracing>true</FeaturePerfTracing>
+        <!-- Keep CoreLib's QCall surface consistent with clrfeatures.cmake.
+             Horizon does not yet provide the native EventPipe backend. -->
+        <FeaturePerfTracing Condition="'$(TargetOS)' == 'libnx'">false</FeaturePerfTracing>
         <FeatureEHFunclets>true</FeatureEHFunclets>
         <ProfilingSupportedBuild>true</ProfilingSupportedBuild>
     </PropertyGroup>

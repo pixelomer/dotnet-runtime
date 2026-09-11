@@ -13,7 +13,13 @@ endif()
 if(NOT DEFINED FEATURE_EVENT_TRACE)
   if (NOT CLR_CMAKE_TARGET_BROWSER)
     # To actually disable FEATURE_EVENT_TRACE, also change clr.featuredefines.props
-    set(FEATURE_EVENT_TRACE 1)
+    if(CLR_CMAKE_TARGET_LIBNX)
+      # Keep synchronized with CoreLib's clr.featuredefines.props. The Horizon
+      # EventPipe OS/backend integration has not been implemented yet.
+      set(FEATURE_EVENT_TRACE 0)
+    else()
+      set(FEATURE_EVENT_TRACE 1)
+    endif()
   endif()
 endif(NOT DEFINED FEATURE_EVENT_TRACE)
 

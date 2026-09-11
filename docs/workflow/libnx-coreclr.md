@@ -359,3 +359,11 @@ It removes the exact SocketAsyncContext registration under the same lock used
 to add it, instead of relying on a closing descriptor's value. Its localized
 error describes the existing one-context-per-descriptor restriction. These
 managed adapter changes are shared by CoreCLR and NativeAOT.
+
+## CoreLib/native feature alignment
+
+Horizon disables native EventPipe tracing by default and selects the matching
+upstream non-EventPipe CoreLib implementation. Keep `clrfeatures.cmake` and
+`clr.featuredefines.props` feature settings aligned when building native CoreCLR
+and managed CoreLib. This keeps managed QCall imports consistent with the native
+runtime's entry table; it does not supply a replacement EventPipe provider.
