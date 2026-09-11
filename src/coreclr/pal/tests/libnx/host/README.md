@@ -4,10 +4,14 @@ This integration probe calls the CoreCLR embedding APIs and statically links
 the production VM, RyuJIT, GC and PAL. Follow the
 [thread probe](../threads/README.md) for devkitPro/ICU prerequisites, the pinned
 libnx source, SDK staging and CoreCLR cross-configuration.
-Export `ICU_NX_INSTALL_DIR` to the source-built ICU installation. From the
-runtime root:
+Export `ICU_NX_INSTALL_DIR` to the source-built ICU installation. The host's QCall checker
+requires dnfile and pyelftools. Install them into a local Python environment
+before invoking the helper. From the runtime root:
 
 ```sh
+python3 -m venv artifacts/qcall-python
+. artifacts/qcall-python/bin/activate
+python3 -m pip install dnfile pyelftools
 ./build.sh clr.corelib -os libnx -arch arm64 -c Release /p:PublicSign=true
 cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
   --target coreclr_static -- -j6
@@ -56,3 +60,15 @@ with `--probe basic`, which is the default.
 Add `--jit-trace` to direct upstream disassembly to the buffered
 `sdmc:/switch/coreclr-jit-disasm.txt`. The host removes any existing file at
 that path before initialization; preserve it before running this option.
+
+## Managed/native QCall consistency
+
+The host build runs `validate-qcalls.py CORELIB HOST_ELF` using the same Python
+interpreter. The checker reads CoreLib ImplMap metadata and the linked ELF's
+QCall table without executing either input. Keep the unstripped ELF and its
+symbol table; inputs must be an ARM64 little-endian 64-bit host and the matching
+CoreLib. Missing managed imports or invalid native table entries fail the build.
+
+The generated report is `artifacts/libnx-coreclr-host/qcall-validation.json`.
+It contains input fingerprints, import counts and missing names for the current
+build. This is a metadata contract check, not a behavioral test of every entry.

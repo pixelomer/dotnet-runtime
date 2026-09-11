@@ -367,3 +367,11 @@ upstream non-EventPipe CoreLib implementation. Keep `clrfeatures.cmake` and
 `clr.featuredefines.props` feature settings aligned when building native CoreCLR
 and managed CoreLib. This keeps managed QCall imports consistent with the native
 runtime's entry table; it does not supply a replacement EventPipe provider.
+
+The [QCall metadata checker](../../src/coreclr/pal/tests/libnx/host/validate-qcalls.py)
+compares CoreLib's actual ImplMap imports with the linked host ELF's native
+QCall table. The host build invokes it automatically and fails on missing
+imports or invalid table structure. Keep the unstripped ELF and install the
+Python prerequisites documented in the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md).
+This checks metadata consistency without executing the inputs; it does not
+exercise entry-point behavior.

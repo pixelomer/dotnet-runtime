@@ -3,7 +3,9 @@
 
 Follow src/coreclr/pal/tests/libnx/threads/README.md for devkitPro/ICU,
 pinned libnx SDK staging and CoreCLR cross-configuration. Export
-ICU_NX_INSTALL_DIR to the source-built ICU installation. From the runtime root:
+ICU_NX_INSTALL_DIR to the source-built ICU installation. Install dnfile and
+pyelftools in the Python environment running this helper; see the sibling
+README.md for setup. From the runtime root:
 
     ./build.sh clr.corelib -os libnx -arch arm64 -c Release /p:PublicSign=true
     cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
@@ -25,6 +27,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 
 source = Path(__file__).resolve().parent
 repo = source.parents[5]
@@ -96,3 +99,6 @@ sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
 subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
                 '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
                 '-r:' + str(corelib), '-out:' + str(managed/'Probe.dll'), str(source/('Stress.cs' if args.probe == 'stress' else 'Probe.cs'))], check=True)
+with (output/'qcall-validation.json').open('w') as result:
+    subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
+                    str(target.with_suffix('.elf'))], stdout=result, check=True)
