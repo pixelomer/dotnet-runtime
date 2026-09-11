@@ -1627,7 +1627,10 @@ int32_t SystemNative_Accept(intptr_t socket, uint8_t* socketAddress, int32_t* so
     while ((accepted = accept4(fd, (struct sockaddr*)socketAddress, &addrLen, SOCK_CLOEXEC)) < 0 && errno == EINTR);
 #else
     while ((accepted = accept(fd, (struct sockaddr*)socketAddress, &addrLen)) < 0 && errno == EINTR);
-#if defined(FD_CLOEXEC)
+// Horizon has no exec inheritance contract. libnx fcntl supports only
+// F_GETFL/F_SETFL and returns a positive error for F_SETFD without setting
+// errno; treating that as an accept failure discards a valid socket.
+#if defined(FD_CLOEXEC) && !defined(TARGET_LIBNX)
     // macOS does not have accept4 but it can set _CLOEXEC on descriptor.
     // Unlike accept4 it is not atomic and the fd can leak child process.
     if ((accepted != -1) && fcntl(accepted, F_SETFD, FD_CLOEXEC) != 0)
@@ -2679,7 +2682,7 @@ int32_t SystemNative_Socket(int32_t addressFamily, int32_t socketType, int32_t p
         return Error_EPROTONOSUPPORT;
     }
 
-#ifdef SOCK_CLOEXEC
+#if defined(SOCK_CLOEXEC) && !defined(TARGET_LIBNX)
     platformSocketType |= SOCK_CLOEXEC;
 #endif
     *createdSocket = socket(platformAddressFamily, platformSocketType, platformProtocolType);
@@ -2688,7 +2691,7 @@ int32_t SystemNative_Socket(int32_t addressFamily, int32_t socketType, int32_t p
         return SystemNative_ConvertErrorPlatformToPal(errno);
     }
 
-#ifndef SOCK_CLOEXEC
+#if !defined(SOCK_CLOEXEC) && !defined(TARGET_LIBNX)
     fcntl(ToFileDescriptor(*createdSocket), F_SETFD, FD_CLOEXEC); // ignore any failures; this is best effort
 #endif
     return Error_SUCCESS;
