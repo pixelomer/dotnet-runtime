@@ -56,7 +56,9 @@ SET_DEFAULT_DEBUG_CHANNEL(THREAD); // some headers have code with asserts, so do
 #include <errno.h>
 #include <stddef.h>
 #include <sys/stat.h>
+#if !HAVE_MACH_EXCEPTIONS && HAVE_SIGALTSTACK
 #include <sys/mman.h>
+#endif
 #if HAVE_MACH_THREADS
 #include <mach/mach.h>
 #endif // HAVE_MACH_THREADS

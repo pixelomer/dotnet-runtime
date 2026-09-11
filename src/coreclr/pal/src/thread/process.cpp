@@ -57,7 +57,6 @@ SET_DEFAULT_DEBUG_CHANNEL(PROCESS); // some headers have code with asserts, so d
 #include <debugmacrosext.h>
 #include <semaphore.h>
 #include <stdint.h>
-#include <dlfcn.h>
 #include <limits.h>
 #include <vector>
 
