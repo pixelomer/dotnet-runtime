@@ -101,3 +101,21 @@ The backend uses MapProcessCodeMemory, SetProcessMemoryPermission and
 MapProcessMemory with the loader-supplied own-process handle. That handle is
 borrowed, not closed by the allocator. This avoids allocating a separate
 CodeMemory object for each fresh commit run.
+
+## PAL file mapping and positional I/O
+
+The `mapnative.h` adapter routes OS mapping operations while retaining CoreCLR's
+PE layout and mapping-object handling. Horizon file views are buffered snapshots
+mapped and protected through process-memory APIs. Shared writable files and
+replacement of live fixed mappings fail explicitly. Read-only views do not
+promise coherence with later file writes. Partial unmapping retains source
+backing until its final page retires; image cleanup also releases unrecorded
+reservations and alignment gaps.
+
+The `LIBNX_ROOT` CMake option selects a staged libnx SDK. Use the
+[file-mapping probe instructions](../../src/coreclr/pal/tests/libnx/file-mapping/README.md)
+to obtain the pinned libnx source and stage all headers, including BSD headers.
+The file-mapping and virtual-memory probes read this SDK path from CMakeCache.
+The PAL pread bridge calls the driver's `fsdevPread` without changing a shared
+descriptor's position or depending on private driver layouts. This bridge
+supports fsdev descriptors; it does not implement other devoptab drivers.

@@ -249,7 +249,8 @@ elseif(HAIKU)
 elseif(LIBNX)
     set(CMAKE_INCLUDE_PATH "")
     include_directories(SYSTEM ${DEVKITA64}/aarch64-none-elf/include)
-    include_directories(SYSTEM ${CROSS_ROOTFS}/libnx/include)
+    set(LIBNX_ROOT "${CROSS_ROOTFS}/libnx" CACHE PATH "libnx SDK root; override for platform development")
+    include_directories(SYSTEM ${LIBNX_ROOT}/include)
     include_directories(SYSTEM ${CROSS_ROOTFS}/portlibs/switch/include/)
 
     # https://github.com/vbe0201/switch-cmake/blob/rewrite/DevkitA64Libnx.cmake

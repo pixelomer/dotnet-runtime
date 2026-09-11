@@ -31,7 +31,7 @@ Abstract:
 #include <stddef.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/mman.h>
+#include "pal/mapnative.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -101,10 +101,6 @@ MAPmmapAndRecord(
     LPVOID *ppvBaseAddress
     );
 
-/* We need MAP_ANON. However on some platforms like HP-UX, it is defined as MAP_ANONYMOUS */
-#if !defined(MAP_ANON) && defined(MAP_ANONYMOUS)
-#define MAP_ANON MAP_ANONYMOUS
-#endif
 
 void
 FileMappingCleanupRoutine(
@@ -404,7 +400,7 @@ CorUnix::InternalCreateFileMapping(
             goto ExitInternalCreateFileMapping;
         }
 
-        UnixFd = -1;  /* will pass MAP_ANON to mmap() instead */
+        UnixFd = -1;  /* will pass MapAnonymous to NativeMap() instead */
     }
     else
     {
@@ -901,7 +897,7 @@ CorUnix::InternalMapViewOfFile(
     }
 
     /* If dwNumberOfBytesToMap is 0, we need to map the entire file.
-     * mmap doesn't do the same thing as Windows in that case, though,
+     * NativeMap doesn't do the same thing as Windows in that case, though,
      * so we use the file size instead. */
     if (0 == dwNumberOfBytesToMap)
     {
@@ -923,16 +919,16 @@ CorUnix::InternalMapViewOfFile(
 
     if (FILE_MAP_COPY == dwDesiredAccess)
     {
-        int flags = MAP_PRIVATE;
+        int flags = MapPrivate;
         if (pProcessLocalData->UnixFd == -1)
         {
-            flags |= MAP_ANON;
+            flags |= MapAnonymous;
         }
 
-        pvBaseAddress = mmap(
+        pvBaseAddress = NativeMap(
             NULL,
             dwNumberOfBytesToMap,
-            PROT_READ|PROT_WRITE,
+            MapRead|MapWrite,
             flags,
             pProcessLocalData->UnixFd,
             offset
@@ -943,13 +939,13 @@ CorUnix::InternalMapViewOfFile(
         INT prot = MAPFileMapToMmapFlags(dwDesiredAccess);
         if (prot != -1)
         {
-            int flags = MAP_SHARED;
+            int flags = MapShared;
             if (pProcessLocalData->UnixFd == -1)
             {
-                flags |= MAP_ANON;
+                flags |= MapAnonymous;
             }
 
-            pvBaseAddress = mmap(
+            pvBaseAddress = NativeMap(
                 NULL,
                 dwNumberOfBytesToMap,
                 prot,
@@ -959,7 +955,7 @@ CorUnix::InternalMapViewOfFile(
                 );
 
 #if ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS
-            if ((MAP_FAILED == pvBaseAddress) && (ENOMEM == errno))
+            if ((MapFailed == pvBaseAddress) && (ENOMEM == errno))
             {
                 /* Search in list of MAPPED_MEMORY_INFO for a shared mapping
                    with the same inode number
@@ -987,7 +983,7 @@ CorUnix::InternalMapViewOfFile(
                           dwNumberOfBytesToMap, 0);
 
                     /* Let's check the mapping's current protection */
-                    ret = mprotect(pReusedMapping->pNMHolder->address,
+                    ret = NativeProtect(pReusedMapping->pNMHolder->address,
                                    pReusedMapping->pNMHolder->size,
                                    prot | PROT_CHECK);
                     if (0 != ret)
@@ -1000,7 +996,7 @@ CorUnix::InternalMapViewOfFile(
                            process */
                         TRACE("Raising protections on mapping @ %p to 0x%x\n",
                               pReusedMapping->pNMHolder->address, prot);
-                        ret = mprotect(pReusedMapping->pNMHolder->address,
+                        ret = NativeProtect(pReusedMapping->pNMHolder->address,
                                    pReusedMapping->pNMHolder->size,
                                    prot);
                     }
@@ -1025,13 +1021,13 @@ CorUnix::InternalMapViewOfFile(
         }
     }
 
-    if (MAP_FAILED == pvBaseAddress
+    if (MapFailed == pvBaseAddress
 #if ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS
          &&  (pReusedMapping == NULL)
 #endif // ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS
         )
     {
-        ERROR( "mmap failed with code %s.\n", strerror( errno ) );
+        ERROR( "NativeMap failed with code %s.\n", strerror( errno ) );
         palError = ERROR_NOT_ENOUGH_MEMORY;
         goto InternalMapViewOfFileLeaveCriticalSection;
 
@@ -1099,7 +1095,7 @@ CorUnix::InternalMapViewOfFile(
 
         if (NO_ERROR != palError)
         {
-            if (-1 == munmap(pvBaseAddress, dwNumberOfBytesToMap))
+            if (-1 == NativeUnmap(pvBaseAddress, dwNumberOfBytesToMap))
             {
                 ERROR("Unable to unmap the file. Expect trouble.\n");
                 goto InternalMapViewOfFileLeaveCriticalSection;
@@ -1157,7 +1153,7 @@ CorUnix::InternalUnmapViewOfFile(
     NativeMapHolderRelease(pThread, pView->pNMHolder);
     pView->pNMHolder = NULL;
 #else
-    if (-1 == munmap((LPVOID)lpBaseAddress, pView->NumberOfBytesToMap))
+    if (-1 == NativeUnmap((LPVOID)lpBaseAddress, pView->NumberOfBytesToMap))
     {
         ASSERT( "Unable to unmap the memory. Error=%s.\n",
                 strerror( errno ) );
@@ -1404,7 +1400,7 @@ static INT MAPFileMapToMmapFlags( DWORD flags )
     if ( FILE_MAP_READ == flags )
     {
         TRACE( "FILE_MAP_READ\n" );
-        return PROT_READ;
+        return MapRead;
     }
     else if ( FILE_MAP_WRITE == flags )
     {
@@ -1413,17 +1409,17 @@ static INT MAPFileMapToMmapFlags( DWORD flags )
         means you cant have writable but not readable
         page. In Windows maps of FILE_MAP_WRITE can still be
         read from. */
-        return PROT_WRITE | PROT_READ;
+        return MapWrite | MapRead;
     }
     else if ( (FILE_MAP_READ|FILE_MAP_WRITE) == flags )
     {
         TRACE( "FILE_MAP_READ|FILE_MAP_WRITE\n" );
-        return PROT_READ | PROT_WRITE;
+        return MapRead | MapWrite;
     }
     else if( FILE_MAP_COPY == flags)
     {
         TRACE( "FILE_MAP_COPY\n");
-        return PROT_READ | PROT_WRITE;
+        return MapRead | MapWrite;
     }
 
     ASSERT( "Unknown flag. This line should not have been executed.\n" );
@@ -1435,25 +1431,25 @@ Function :
     MAPMmapProtToAccessFlags
 
     Converts unix protection flags to file access flags.
-    We ignore PROT_EXEC.
+    We ignore MapExecute.
 --*/
 static DWORD MAPMmapProtToAccessFlags( int prot )
 {
     DWORD flAccess = 0; // default: no access
 
-    if (PROT_NONE == prot)
+    if (MapNone == prot)
     {
         flAccess = 0;
     }
-    else if ( ((PROT_READ | PROT_WRITE) & prot) == (PROT_READ | PROT_WRITE) )
+    else if ( ((MapRead | MapWrite) & prot) == (MapRead | MapWrite) )
     {
         flAccess = FILE_MAP_ALL_ACCESS;
     }
-    else if ( (PROT_WRITE & prot) == PROT_WRITE )
+    else if ( (MapWrite & prot) == MapWrite )
     {
         flAccess = FILE_MAP_WRITE;
     }
-    else if ( (PROT_READ & prot) == PROT_READ )
+    else if ( (MapRead & prot) == MapRead )
     {
         flAccess = FILE_MAP_READ;
     }
@@ -1762,7 +1758,7 @@ static PMAPPED_VIEW_LIST FindSharedMappingReplacement(
             // ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS systems there
             // cannot be shared mappings of two overlapping regions of the
             // same file, in the same process. Therefore, whether this view
-            // is reusable or not we cannot mmap the requested region of
+            // is reusable or not we cannot NativeMap the requested region of
             // the specified file.
             //
 
@@ -1830,7 +1826,7 @@ static LONG NativeMapHolderRelease(CPalThread *pThread, NativeMapHolder * thisNM
     LONG ret = InterlockedDecrement(&thisNMH->ref_count);
     if (ret == 0)
     {
-        if (-1 == munmap(thisNMH->address, thisNMH->size))
+        if (-1 == NativeUnmap(thisNMH->address, thisNMH->size))
         {
             ASSERT( "Unable to unmap memory. Error=%s.\n",
                     strerror( errno ) );
@@ -1905,7 +1901,7 @@ static size_t RoundToPage(size_t size, off_t offset)
     return result;
 }
 
-// Do the actual mmap() call, and record the mapping in the MappedViewList list.
+// Do the actual NativeMap() call, and record the mapping in the MappedViewList list.
 // This call assumes the mapping_critsec has already been taken.
 static PAL_ERROR
 MAPmmapAndRecord(
@@ -1926,31 +1922,31 @@ MAPmmapAndRecord(
     off_t adjust = OffsetWithinPage(offset);
     LPVOID pvBaseAddress = static_cast<char *>(addr) - adjust;
 
-    // Ensure address and offset arguments mmap() are page-aligned.
+    // Ensure address and offset arguments NativeMap() are page-aligned.
     _ASSERTE(OffsetWithinPage(offset - adjust) == 0);
     _ASSERTE(OffsetWithinPage((off_t)pvBaseAddress) == 0);
 
 #ifdef __APPLE__
-    if ((prot & PROT_EXEC) != 0 && IsRunningOnMojaveHardenedRuntime())
+    if ((prot & MapExecute) != 0 && IsRunningOnMojaveHardenedRuntime())
     {
         // Mojave hardened runtime doesn't allow executable mappings of a file. So we have to create an
         // anonymous mapping and read the file contents into it instead.
 
 #if defined(HOST_ARM64)
-        // Set the requested mapping with forced PROT_WRITE, mmap the file, and copy its contents there.
-        // Once PROT_WRITE and PROT_EXEC are set together, Apple Silicon will require the use of
+        // Set the requested mapping with forced MapWrite, NativeMap the file, and copy its contents there.
+        // Once MapWrite and MapExecute are set together, Apple Silicon will require the use of
         // PAL_JitWriteProtect to switch between executable and writable.
-        LPVOID pvMappedFile = mmap(NULL, len + adjust, PROT_READ, MAP_PRIVATE, fd, offset - adjust);
-        if (MAP_FAILED == pvMappedFile)
+        LPVOID pvMappedFile = NativeMap(NULL, len + adjust, MapRead, MapPrivate, fd, offset - adjust);
+        if (MapFailed == pvMappedFile)
         {
-            ERROR_(LOADER)("mmap failed with code %d: %s.\n", errno, strerror(errno));
+            ERROR_(LOADER)("NativeMap failed with code %d: %s.\n", errno, strerror(errno));
             palError = FILEGetLastErrorFromErrno();
         }
         else
         {
-            if (-1 == mprotect(pvBaseAddress, len + adjust, prot | PROT_WRITE))
+            if (-1 == NativeProtect(pvBaseAddress, len + adjust, prot | MapWrite))
             {
-                ERROR_(LOADER)("mprotect failed with code %d: %s.\n", errno, strerror(errno));
+                ERROR_(LOADER)("NativeProtect failed with code %d: %s.\n", errno, strerror(errno));
                 palError = FILEGetLastErrorFromErrno();
             }
             else
@@ -1959,7 +1955,7 @@ MAPmmapAndRecord(
                 memcpy(pvBaseAddress, pvMappedFile, len + adjust);
                 PAL_JitWriteProtect(false);
             }
-            if (-1 == munmap(pvMappedFile, len + adjust))
+            if (-1 == NativeUnmap(pvMappedFile, len + adjust))
             {
                 ERROR_(LOADER)("Unable to unmap the file. Expect trouble.\n");
                 if (NO_ERROR == palError)
@@ -1967,12 +1963,12 @@ MAPmmapAndRecord(
             }
         }
 #else
-        // Set the requested mapping with forced PROT_WRITE to ensure data from the file can be read there,
-        // read the data in and finally remove the forced PROT_WRITE. On Intel we can still switch the
-        // protection later with mprotect.
-        if ((mprotect(pvBaseAddress, len + adjust, PROT_WRITE) == -1) ||
+        // Set the requested mapping with forced MapWrite to ensure data from the file can be read there,
+        // read the data in and finally remove the forced MapWrite. On Intel we can still switch the
+        // protection later with NativeProtect.
+        if ((NativeProtect(pvBaseAddress, len + adjust, MapWrite) == -1) ||
             (pread(fd, pvBaseAddress, len + adjust, offset - adjust) == -1) ||
-            (mprotect(pvBaseAddress, len + adjust, prot) == -1))
+            (NativeProtect(pvBaseAddress, len + adjust, prot) == -1))
         {
             palError = FILEGetLastErrorFromErrno();
         }
@@ -1982,10 +1978,10 @@ MAPmmapAndRecord(
     else
 #endif
     {
-        pvBaseAddress = mmap(pvBaseAddress, len + adjust, prot, flags, fd, offset - adjust);
-        if (MAP_FAILED == pvBaseAddress)
+        pvBaseAddress = NativeMap(pvBaseAddress, len + adjust, prot, flags, fd, offset - adjust);
+        if (MapFailed == pvBaseAddress)
         {
-            ERROR_(LOADER)( "mmap failed with code %d: %s.\n", errno, strerror( errno ) );
+            ERROR_(LOADER)( "NativeMap failed with code %d: %s.\n", errno, strerror( errno ) );
             palError = FILEGetLastErrorFromErrno();
         }
     }
@@ -1995,7 +1991,7 @@ MAPmmapAndRecord(
         palError = MAPRecordMapping(pMappingObject, pPEBaseAddress, pvBaseAddress, len, prot);
         if (NO_ERROR != palError)
         {
-            if (-1 == munmap(pvBaseAddress, len))
+            if (-1 == NativeUnmap(pvBaseAddress, len))
             {
                 ERROR_(LOADER)("Unable to unmap the file. Expect trouble.\n");
             }
@@ -2040,7 +2036,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
 #endif
     SIZE_T reserveSize = 0;
     bool forceOveralign = false;
-    int readWriteFlags = MAP_PRIVATE|MAP_FIXED;
+    int readWriteFlags = MapPrivate|MapFixed;
     int readOnlyFlags = readWriteFlags;
 
     ENTRY("MAPMapPEFile (hFile=%p offset=%zx)\n", hFile, offset);
@@ -2143,8 +2139,8 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
     {
         //if we're forcing relocs, create an anonymous mapping at the preferred base.  Only create the
         //mapping if we can create it at the specified address.
-        pForceRelocBase = mmap( (void*)preferredBase, GetVirtualPageSize(), PROT_NONE, MAP_ANON|MAP_FIXED|MAP_PRIVATE, -1, 0 );
-        if (pForceRelocBase == MAP_FAILED)
+        pForceRelocBase = NativeMap( (void*)preferredBase, GetVirtualPageSize(), MapNone, MapAnonymous|MapFixed|MapPrivate, -1, 0 );
+        if (pForceRelocBase == MapFailed)
         {
             TRACE_(LOADER)("Attempt to take preferred base of %p to force relocation failed\n", (void*)preferredBase);
             forceRelocs = false;
@@ -2156,12 +2152,12 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
     }
 #endif // _DEBUG
 
-    // The first mmap mapping covers the entire file but just reserves space. Subsequent mappings cover
-    // individual parts of the file, and actually map pages in. Note that according to the mmap() man page, "A
-    // successful mmap deletes any previous mapping in the allocated address range." Also, "If a MAP_FIXED
-    // request is successful, the mapping established by mmap() replaces any previous mappings for the process' pages
-    // in the range from addr to addr + len." Thus, we will record a series of mappings here, one for the header
-    // and each of the sections, as well as all the space between them that we give PROT_NONE protections.
+    // Reserve the image range before mapping its header and individual sections.
+    // The Unix adapter uses mmap with MAP_FIXED to replace the reservation.
+    // Horizon's adapter accepts fixed placement only into owned reserved holes;
+    // it rejects replacement of live mappings without discarding their contents.
+    // Record the header and sections, together with the inaccessible gaps, so
+    // image cleanup can retire the complete reservation.
 
     // We're going to start adding mappings to the mapping list, so take the critical section
     minipal_mutex_enter(&mapping_critsec);
@@ -2197,21 +2193,21 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
             usedBaseAddr = (void*) preferredBase;
         }
 #endif // FEATURE_ENABLE_NO_ADDRESS_SPACE_RANDOMIZATION
-        // MAC64 requires we pass MAP_SHARED (or MAP_PRIVATE) flags - otherwise, the call is failed.
+        // MAC64 requires we pass MapShared (or MapPrivate) flags - otherwise, the call is failed.
         // Refer to mmap documentation at http://www.manpagez.com/man/2/mmap/ for details.
-        int mapFlags = MAP_ANON|MAP_PRIVATE;
+        int mapFlags = MapAnonymous|MapPrivate;
 #ifdef __APPLE__
         if (IsRunningOnMojaveHardenedRuntime())
         {
             mapFlags |= MAP_JIT;
         }
 #endif // __APPLE__
-        loadedBase = mmap(usedBaseAddr, reserveSize, PROT_NONE, mapFlags, -1, 0);
+        loadedBase = NativeMap(usedBaseAddr, reserveSize, MapNone, mapFlags, -1, 0);
     }
 
-    if (MAP_FAILED == loadedBase)
+    if (MapFailed == loadedBase)
     {
-        ERROR_(LOADER)( "mmap failed with code %d: %s.\n", errno, strerror( errno ) );
+        ERROR_(LOADER)( "NativeMap failed with code %d: %s.\n", errno, strerror( errno ) );
         palError = FILEGetLastErrorFromErrno();
         loadedBase = NULL; // clear it so we don't try to use it during clean-up
         goto doneReleaseMappingCriticalSection;
@@ -2223,7 +2219,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
     if (forceRelocs)
     {
         _ASSERTE(((SIZE_T)loadedBase) != preferredBase);
-        munmap(pForceRelocBase, GetVirtualPageSize()); // now that we've forced relocation, let the original address mapping go
+        NativeUnmap(pForceRelocBase, GetVirtualPageSize()); // now that we've forced relocation, let the original address mapping go
     }
     if (((SIZE_T)loadedBase) != preferredBase)
     {
@@ -2247,7 +2243,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
         // If PAL_MAP_READONLY_PE_HUGE_PAGE_AS_SHARED is set to 1. map the readonly sections as shared
         // which works well with the behavior of the hugetlbfs
         if (mapAsShared != NULL && (strcmp(mapAsShared, "1") == 0))
-            readOnlyFlags = MAP_SHARED|MAP_FIXED;
+            readOnlyFlags = MapShared|MapFixed;
     }
 
     //we have now reserved memory (potentially we got rebased).  Walk the PE sections and map each part
@@ -2264,16 +2260,16 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
 
     _ASSERTE(OffsetWithinPage(offset) == OffsetWithinPage((off_t)loadedHeader));
     palError = MAPmmapAndRecord(pFileObject, loadedBase,
-                    (LPVOID)loadedHeader, headerSize, PROT_READ, readOnlyFlags, fd, offset,
+                    (LPVOID)loadedHeader, headerSize, MapRead, readOnlyFlags, fd, offset,
                     &loadedHeaderBase);
     if (NO_ERROR != palError)
     {
-        ERROR_(LOADER)( "mmap of PE header failed\n" );
+        ERROR_(LOADER)( "NativeMap of PE header failed\n" );
         goto doneReleaseMappingCriticalSection;
     }
 
     TRACE_(LOADER)("PE header loaded @ %p\n", loadedHeader);
-    _ASSERTE(loadedHeaderBase == loadedBase); // we already preallocated the space, and we used MAP_FIXED, so we should have gotten this address
+    _ASSERTE(loadedHeaderBase == loadedBase); // we already preallocated the space, and we used MapFixed, so we should have gotten this address
     IMAGE_SECTION_HEADER * firstSection;
     firstSection = (IMAGE_SECTION_HEADER*)(((char *)loadedHeader)
                                            + loadedHeader->e_lfanew
@@ -2302,7 +2298,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
     for (unsigned i = 0; i < numSections; ++i)
     {
         //for each section, map the section of the file to the correct virtual offset.  Gather the
-        //protection bits from the PE file and convert them to the correct mmap PROT_* flags.
+        //protection bits from the PE file and convert them to the correct NativeMap PROT_* flags.
         void * sectionData;
         int prot = 0;
         IMAGE_SECTION_HEADER &currentHeader = firstSection[i];
@@ -2336,14 +2332,14 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
             goto doneReleaseMappingCriticalSection;
         }
 
-        // Is there space between the previous section and this one? If so, add a PROT_NONE mapping to cover it.
+        // Is there space between the previous section and this one? If so, add a MapNone mapping to cover it.
         if (prevSectionEndAligned < sectionBaseAligned)
         {
             palError = MAPRecordMapping(pFileObject,
                             loadedBase,
                             prevSectionEndAligned,
                             (char*)sectionBaseAligned - (char*)prevSectionEndAligned,
-                            PROT_NONE);
+                            MapNone);
             if (NO_ERROR != palError)
             {
                 ERROR_(LOADER)( "recording gap section before section %d failed\n", i );
@@ -2356,12 +2352,12 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
         //    continue;
         int flags = readOnlyFlags;
         if (currentHeader.Characteristics & IMAGE_SCN_MEM_EXECUTE)
-            prot |= PROT_EXEC;
+            prot |= MapExecute;
         if (currentHeader.Characteristics & IMAGE_SCN_MEM_READ)
-            prot |= PROT_READ;
+            prot |= MapRead;
         if (currentHeader.Characteristics & IMAGE_SCN_MEM_WRITE)
         {
-            prot |= PROT_WRITE;
+            prot |= MapWrite;
             flags = readWriteFlags;
         }
 
@@ -2375,7 +2371,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
                         &sectionData);
         if (NO_ERROR != palError)
         {
-            ERROR_(LOADER)( "mmap of section %d failed\n", i );
+            ERROR_(LOADER)( "NativeMap of section %d failed\n", i );
             goto doneReleaseMappingCriticalSection;
         }
 
@@ -2393,7 +2389,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
         prevSectionEndAligned = ALIGN_UP((char*)sectionBase + currentHeader.SizeOfRawData, GetVirtualPageSize()); // round up to page boundary
     }
 
-    // Is there space after the last section and before the end of the mapped image? If so, add a PROT_NONE mapping to cover it.
+    // Is there space after the last section and before the end of the mapped image? If so, add a MapNone mapping to cover it.
     char* imageEnd;
     imageEnd = (char*)loadedBase + virtualSize; // actually, points just after the mapped end
     if (prevSectionEndAligned < imageEnd)
@@ -2402,7 +2398,7 @@ void * MAPMapPEFile(HANDLE hFile, off_t offset)
                         loadedBase,
                         prevSectionEndAligned,
                         offset + (char*)imageEnd - (char*)prevSectionEndAligned,
-                        PROT_NONE);
+                        MapNone);
         if (NO_ERROR != palError)
         {
             ERROR_(LOADER)( "recording end of image gap section failed\n" );
@@ -2516,7 +2512,7 @@ BOOL MAPUnmapPEFile(LPCVOID lpAddress)
         PMAPPED_VIEW_LIST pView = CONTAINING_RECORD(pLink, MAPPED_VIEW_LIST, Link);
 
         // remove pView mapping from the list
-        if (-1 == munmap(pView->lpAddress, pView->NumberOfBytesToMap))
+        if (-1 == NativeUnmap(pView->lpAddress, pView->NumberOfBytesToMap))
         {
             // Emit an error message in a trace, but continue trying to do the rest
             ERROR_(LOADER)("Unable to unmap the file. Expect trouble.\n");
@@ -2531,6 +2527,11 @@ BOOL MAPUnmapPEFile(LPCVOID lpAddress)
         free(pView); // this leaves pLink dangling
     }
 
+#ifdef TARGET_LIBNX
+    // Image placement can leave unrecorded alignment padding, or fail before
+    // the first section is recorded. Retire the remaining owned reservation.
+    if (NativeReleaseImageReservation(lpAddress) != 0) retval = FALSE;
+#endif
     TRACE_(LOADER)("MAPUnmapPEFile returning %d\n", retval);
     return retval;
 }
@@ -2568,7 +2569,7 @@ BOOL MAPMarkSectionAsNotNeeded(LPCVOID lpAddress)
 
         if (pView->lpAddress == lpAddress) // this entry is associated with the section
         {
-            if (-1 == posix_madvise(pView->lpAddress, pView->NumberOfBytesToMap, POSIX_MADV_DONTNEED))
+            if (-1 == NativeDiscard(pView->lpAddress, pView->NumberOfBytesToMap))
             {
                 ERROR_(LOADER)("Unable to mark the section as NotNeeded.\n");
                 retval = FALSE;

@@ -1,6 +1,7 @@
 #include "pal.h"
 namespace CorUnix { class CPalThread; }
 #include "pal/virtual.h"
+#include "pal/mapnative.h"
 extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/kernel/mutex.h>
@@ -220,7 +221,9 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     }
     // Existing permissions are real success. For other mapped memory ask the kernel; do not
     // emulate NOACCESS by decommit (which must discard the old contents).
-    if (!same && R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission)))
+    int nativeProtection = protect == PAGE_READWRITE ? MapRead | MapWrite : protect == PAGE_READONLY ? MapRead : MapNone;
+    if (!same && NativeProtect(reinterpret_cast<void*>(start), bytes, nativeProtection) != 0 &&
+        R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission)))
     {
         SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
     }

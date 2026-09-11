@@ -22,7 +22,7 @@ Abstract:
 
 #include "common.h"
 
-#include <sys/mman.h>
+#include "pal/mapnative.h"
 
 SET_DEFAULT_DEBUG_CHANNEL(VIRTUAL);
 
@@ -38,22 +38,22 @@ INT W32toUnixAccessControl( IN DWORD flProtect )
     switch ( flProtect & 0xff )
     {
     case PAGE_READONLY :
-        MemAccessControl = PROT_READ;
+        MemAccessControl = MapRead;
         break;
     case PAGE_READWRITE :
-        MemAccessControl = PROT_READ | PROT_WRITE;
+        MemAccessControl = MapRead | MapWrite;
         break;
     case PAGE_EXECUTE_READWRITE:
-        MemAccessControl = PROT_EXEC | PROT_READ | PROT_WRITE;
+        MemAccessControl = MapExecute | MapRead | MapWrite;
         break;
     case PAGE_EXECUTE :
-        MemAccessControl = PROT_EXEC;
+        MemAccessControl = MapExecute;
         break;
     case PAGE_EXECUTE_READ :
-        MemAccessControl = PROT_EXEC | PROT_READ;
+        MemAccessControl = MapExecute | MapRead;
         break;
     case PAGE_NOACCESS :
-        MemAccessControl = PROT_NONE;
+        MemAccessControl = MapNone;
         break;
 
     default:
