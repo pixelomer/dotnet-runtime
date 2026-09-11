@@ -25,6 +25,7 @@ SET_DEFAULT_DEBUG_CHANNEL(THREAD); // some headers have code with asserts, so do
 #include "pal/virtual.h"
 #if defined(TARGET_LIBNX)
 #include "pal/libnx/context.h"
+#include "../../../minipal/libnx/doublemapping.h"
 #endif
 
 #if HAVE_SYS_PTRACE_H
@@ -2187,7 +2188,11 @@ DBG_FlushInstructionCache(
                           IN LPCVOID lpBaseAddress,
                           IN SIZE_T dwSize)
 {
-#if defined(__linux__) && defined(HOST_ARM)
+#if defined(TARGET_LIBNX)
+    if (LibnxFlushCodeMemory(lpBaseAddress, dwSize)) return TRUE;
+    // Static native text and other externally owned mappings use their own VA.
+    __builtin___clear_cache((char*)lpBaseAddress, (char*)lpBaseAddress + dwSize);
+#elif defined(__linux__) && defined(HOST_ARM)
     // On Linux/arm (at least on 3.10) we found that there is a problem with __do_cache_op (arch/arm/kernel/traps.c)
     // implementing cacheflush syscall. cacheflush flushes only the first page in range [lpBaseAddress, lpBaseAddress + dwSize)
     // and leaves other pages in undefined state which causes random tests failures (often due to SIGSEGV) with no particular pattern.

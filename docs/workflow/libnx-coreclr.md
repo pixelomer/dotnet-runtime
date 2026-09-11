@@ -82,3 +82,17 @@ on unused POSIX mapping headers; the utility mapping include is Apple-only.
 Horizon has no cgroup hierarchy or CPU-bandwidth quota. Cgroup initialization
 and cleanup own no resources, and `PAL_GetCpuLimit` returns FALSE without writing
 the output. Permitted CPU count comes from the separate kernel-backed query.
+
+## CoreCLR executable allocator integration
+
+The Horizon minipal target selects `minipal/libnx/doublemapping.cpp`.
+Its VMToOSInterface backend uses CodeMemory chunks and paired libnx-reserved
+virtual arenas. Partial commitments and referenced writable subviews retain
+explicit backing and handle ownership. Cache publication resolves the writable
+alias even while CoreCLR caches a writer view.
+
+The existing executable allocator and loader heaps are unchanged. A null
+CreateTemplate selects CoreCLR's dynamic interleaved code/data path.
+See the [executable-memory probe](../../src/coreclr/pal/tests/libnx/executable-memory/README.md)
+for build instructions, bounded placement, mode restrictions and ownership
+checks. This native boundary probe does not initialize the managed runtime.
