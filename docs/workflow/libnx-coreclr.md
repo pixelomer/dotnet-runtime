@@ -283,3 +283,36 @@ lifetimes after the original file or mapping handle closes. Use its documented
 libnx revision, which makes unsupported fcntl operations return -1 with errno.
 The embedded host traces file/conversion failures, native termination and
 exception state without replacing the underlying operation.
+
+## ARM64 native TLS ABI
+
+CoreCLR and NativeAOT ARM64 assembly use __aarch64_read_tp with static TLS
+linker relocations, matching the devkitA64 soft thread-pointer ABI. They do not
+read Linux TPIDR_EL0 or embed private libnx ThreadVars offsets. CoreCLR retains
+ordinary thread-static helpers because its optimized JIT TLS expansion assumes
+the Linux ABI; other JIT compilation remains enabled.
+
+The startup probe compares both assembly macros with compiler TLS on the main
+thread and native/PAL workers, including initial values and writes. Its build
+requires the generated NativeAOT assembly offsets as well as production PAL
+objects; see the [startup recipe](../../src/coreclr/pal/tests/libnx/startup/README.md).
+
+## Independent executable writer views
+
+Every writable-view request owns a disjoint address range, even when the
+requested RX bytes overlap. This preserves CoreCLR's address-containment writer
+cache contract. Each view maps the underlying source segments, retains its
+chunks, publishes caches and retires precisely its own mappings. Other views
+remain independently writable. Partial mapping failures roll back only the
+segments acquired by that request.
+
+The [executable-memory probe](../../src/coreclr/pal/tests/libnx/executable-memory/README.md)
+checks overlapping requests, independent retirement, cross-chunk publication
+and rollback. Freed-address checks run before reuse on a single thread; parallel
+workers may legitimately reuse retired holes.
+
+The embedded managed probe exercises arithmetic, allocation, root survival
+through GC.Collect and explicit throw/catch through the ordinary CoreCLR host
+APIs. See the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md) for
+matching CoreLib and native link inputs. This workload does not cover broad BCL
+support, managed worker activation or runtime unloading.
