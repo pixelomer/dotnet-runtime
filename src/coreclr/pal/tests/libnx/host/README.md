@@ -36,3 +36,23 @@ Managed Main checks arithmetic, an allocation surviving collection and a caught
 exception, with expected managed exit code 100. A native link or successful
 coreclr_initialize alone does not demonstrate completion of Main. This is a
 focused embedding probe, not an exhaustive runtime or unload/restart check.
+
+Use `--probe stress` to compile Stress.cs instead of the basic Probe.cs:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/host/build.py --probe stress
+```
+
+Both selections produce Probe.dll in the same managed output directory. Copy
+the newly generated managed files to the documented SD destination whenever
+the selection or managed inputs change; rebuilding does not deploy them.
+Compilation is deterministic.
+
+The stress workload checks worker/GC/TLS/finalizer and unmanaged-call behavior.
+The host passes its reporting function address as an explicit argument; this
+does not rely on native-library name lookup. The basic probe remains available
+with `--probe basic`, which is the default.
+
+Add `--jit-trace` to direct upstream disassembly to the buffered
+`sdmc:/switch/coreclr-jit-disasm.txt`. The host removes any existing file at
+that path before initialization; preserve it before running this option.

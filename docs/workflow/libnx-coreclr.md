@@ -316,3 +316,26 @@ through GC.Collect and explicit throw/catch through the ordinary CoreCLR host
 APIs. See the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md) for
 matching CoreLib and native link inputs. This workload does not cover broad BCL
 support, managed worker activation or runtime unloading.
+
+## Resident native BCL and managed workers
+
+The static CoreCLR link includes System.Native alongside globalization,
+compression and the GC map encoder. Horizon's default P/Invoke resolver routes
+libSystem.Native imports through its existing static export table. The
+unsupported POSIX-signal backend returns zero for a signal without a native
+number. Network-change support compiles the existing BSD route implementation
+and propagates native socket failures; sys/uio.h is needed only by Linux netlink.
+
+The host's stress workload exercises native environment access, an explicitly
+supplied unmanaged reporting function, implicit and explicit exceptions,
+ThreadStatic isolation, worker allocations with concurrent collections and
+finalizers. This is a bounded source workload, not a claim of complete BCL or
+managed suspension coverage.
+
+Select it with --probe stress in the
+[host build recipe](../../src/coreclr/pal/tests/libnx/host/README.md).
+Compilation is deterministic. Both basic and stress selections produce
+Probe.dll; copy the matching managed output when changing the selection.
+The optional --jit-trace uses the upstream buffered JitStdOutFile and replaces
+its designated disassembly file. Ordinary native operations and runtime
+algorithms remain unchanged by the host's tracing.
