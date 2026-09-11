@@ -27,3 +27,8 @@ Async sockets, DNS, IPv6, TLS, HTTP, external connectivity and concurrent socket
 operations are outside this probe. The native event-port fallback returns
 ENOSYS when epoll/kqueue are unavailable; replacing only the NativeAOT SDK
 assemblies does not select a platform-specific System.Net.Sockets implementation.
+
+SafeSocketHandle's field initializer reaches SocketAsyncEngine during socket
+construction, including synchronous use. The source tree's poll-based
+`SocketAsyncEngine.Libnx.cs` is selected by building System.Net.Sockets for
+libnx; substituting only CoreLib cannot change that engine selection.
