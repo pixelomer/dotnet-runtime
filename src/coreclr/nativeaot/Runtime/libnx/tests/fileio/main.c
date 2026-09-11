@@ -15,6 +15,7 @@ extern int32_t SystemNative_Write(intptr_t,const void*,int32_t);
 extern int64_t SystemNative_LSeek(intptr_t,int64_t,int32_t);
 extern int32_t SystemNative_Close(intptr_t);
 extern intptr_t SystemNative_Dup(intptr_t);
+unsigned __nx_applet_exit_mode = 1;
 static int fd;
 static unsigned failures, checks;
 static FILE* logFile;
@@ -76,6 +77,26 @@ int main(void) {
         Check(SystemNative_Read(fd,data,sizeof(data))==sizeof(data));
     }
     errno=0;Check(SystemNative_Dup(-1)==-1 && errno==EBADF);
+    for (unsigned round = 0; round < 4; ++round) {
+        int descriptors[1024];
+        unsigned count = 0;
+        int error = 0;
+        while (count < 1024) {
+            // Seed a distinct old error: exhaustion must report its own error.
+            errno = EINVAL;
+            int copy = (int)SystemNative_Dup(fd);
+            if (copy < 0) { error = errno; break; }
+            descriptors[count++] = copy;
+        }
+        Check(count > 0 && count < 1024);
+        Check(error == EMFILE);
+        for (unsigned i = 0; i < count; ++i) Check(SystemNative_Close(descriptors[i]) == 0);
+        int recovered = (int)SystemNative_Dup(fd);
+        Check(recovered >= 0 && recovered != fd);
+        if (recovered >= 0) Check(SystemNative_Close(recovered) == 0);
+        Check(SystemNative_PRead(fd, data, sizeof(data), 0) == sizeof(data));
+        fprintf(log, "DUP_EXHAUSTION round=%u duplicates=%u errno=%d recovered=%d\n", round, count, error, recovered);
+    }
     Check(SystemNative_Close(fd)==0);
     fd=open(name,O_RDONLY);
     Check(fd>=0);

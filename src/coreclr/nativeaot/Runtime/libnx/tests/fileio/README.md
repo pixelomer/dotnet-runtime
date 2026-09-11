@@ -1,44 +1,43 @@
 # Horizon BCL positional I/O
 
-These build commands target the preserved .NET 9.0.3 runtime. Use the
-`horizon-net9-nativeaot` branch for this recipe; the
-[managed stress guide](../managed/README.md) describes the .NET 10 probe.
+The System.Native adapter serves both CoreCLR and NativeAOT. Positional I/O
+uses seek/read-or-write/restore under a shared position lock. Ordinary
+regular-file Read/Write, LSeek and Close use the same lock, including file
+descriptions shared through duplicates. Non-regular blocking reads/writes do
+not hold it. Foreign users of the same description must obey this serialization;
+it is not a global libc replacement or cross-process atomicity guarantee.
 
-The System.Native libnx adapter implements positional I/O using
-seek/read-or-write/restore under a shared position lock. Ordinary regular-file
-Read/Write, LSeek and Close use the same lock, including file descriptions shared
-through duplicate descriptors. Non-regular blocking Read/Write do not hold it.
-Foreign native users of the same file description must not bypass this
-serialization. This is not a global libc replacement and does not provide
-atomicity against unrelated processes modifying or truncating the file.
+Positional reads beyond file size operate at exact EOF, preserving descriptor
+and access checks. Duplication validates the handle through __get_handle and
+retains it with libsysbase dup. It clears stale errno and reports EMFILE when
+duplication fails without setting an error. Close-on-exec is unsupported.
 
-Positional reads beyond the file size are performed at exact EOF to return zero
-while retaining the underlying read's descriptor/access checks.
+## Build for .NET 10
 
-Descriptor duplication uses libsysbase `dup`, validating the input through
-`__get_handle` first and retaining shared handle ownership. The adapter does not
-treat libnx's positive unsupported-command result from `fcntl` as a descriptor.
-Close-on-exec is not supported.
-
-## Build and scope
-
-Use the source prerequisites in the [PAL probe guide](../pal/README.md).
-From the runtime root, build the native library subset and link the probe:
+Follow the [CoreCLR thread probe](../../../../../pal/tests/libnx/threads/README.md)
+for devkitPro/ICU prerequisites, pinned libnx acquisition, complete SDK staging
+and CoreCLR cross-configuration. From the runtime root:
 
 ```sh
-ROOTFS_DIR="$DEVKITPRO" ./build.sh -s libs.native -c Release \
-  --cross -a arm64 --os libnx
-python3 src/coreclr/nativeaot/Runtime/libnx/tests/fileio/build.py
+cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
+  --target System.Native-Static -- -j6
+python3 src/coreclr/nativeaot/Runtime/libnx/tests/fileio/build.py \
+  --archive artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe/libs-native/System.Native/libSystem.Native.a \
+  --libnx-root "$LIBNX_ROOT"
 ```
 
-Outputs are under `artifacts/libnx-fileio-test/`, including
-`nativeaot-fileio-test.nro`, its ELF and map. The log is
-`sdmc:/switch/nativeaot-fileio-test.txt`; preserve any existing file before use.
-The probe creates `nativeaot-fileio-test.bin` exclusively and deletes only its
-own file. No game files are used.
+The helper accepts an explicit archive and SDK; its no-argument archive default
+remains the .NET 9 output path. Use the command above for this branch.
+Outputs under `artifacts/libnx-fileio-test` include NRO, ELF and map.
+The log `sdmc:/switch/nativeaot-fileio-test.txt` is overwritten; preserve it
+before running. The probe creates `sdmc:/switch/nativeaot-fileio-test.bin`
+exclusively and deletes only its own file. It requests application exit to HOME.
 
-The workload exercises concurrent disjoint positional writes/reads, preserved
-ordinary file position, exact/beyond/partial EOF, negative offsets,
-Read/Write/LSeek, read-only write rejection, descriptor duplication/shared
-position, independent closing and invalid descriptors. It does not replace
-managed FileStream/RandomAccess, path-normalization or file-locking tests.
+## Workload
+
+Concurrent disjoint positional reads/writes check ordinary cursor preservation,
+EOF and range handling, read-only rejection and duplicate/shared-position
+ownership. Exhaustion rounds retain actual duplicates until the table is full,
+check EMFILE, close the duplicates and verify recovery with the original input.
+This native probe does not replace managed FileStream/RandomAccess, path
+normalization, asynchronous I/O or file-locking checks.

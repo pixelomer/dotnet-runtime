@@ -69,7 +69,13 @@ static int LibnxDup(int fd)
     // its public handle lookup before dup (which lacks its own range check).
     int result;
     if (!__get_handle(fd)) { errno=EBADF; result=-1; }
-    else result=dup(fd);
+    else {
+        // libsysbase returns -1 without setting errno when its table is full.
+        // Do not let an unrelated earlier error escape through managed Dup.
+        errno = 0;
+        result = dup(fd);
+        if (result < 0 && errno == 0) errno = EMFILE;
+    }
     int error=errno;
     if (pthread_mutex_unlock(&libnxFilePositionLock)) abort();
     errno=error;

@@ -27,3 +27,13 @@ EventPipe is disabled consistently in managed CoreLib and native CoreCLR.
 Data-pool protection changes and shared writable file mappings have explicit
 limits. See the [CoreCLR PAL guide](libnx-coreclr.md) for the supported adapters
 and source-built probe recipes.
+
+## Shared native descriptor exhaustion
+
+System.Native validates the input descriptor under its shared position lock
+and uses libsysbase dup to retain real ownership. It clears stale errno before
+dup and reports EMFILE if duplication fails without setting an error.
+The native probe exhausts the descriptor table, closes its duplicates, then
+checks duplication recovery and reads the original file. CoreCLR and NativeAOT
+share this implementation; the native workload does not exercise managed
+asynchronous file I/O.
