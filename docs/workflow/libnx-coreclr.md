@@ -129,3 +129,28 @@ CoreCLR uses C++ exception cleanup for these views. The toolchain does not
 disable C++ EH for the entire platform; NativeAOT controls it in its own scope.
 The native file-mapping probe exercises these boundaries, not a complete
 managed image load.
+
+## Thread integration and exit-safe shared reaping
+
+The PAL uses libnx's current Thread to obtain usable stack bounds and validates
+them against the executing SP. Priority changes use a borrowed
+`pthreadGetNativeHandle` and Horizon's process priority mask. The handle is
+valid only while the pthread is live; no private pthread layout is imported.
+The PAL retains its thread objects, startup handshake and synchronization.
+
+The shared CoreCLR/NativeAOT/System.Native reaper queues completion from a TLS
+destructor, covering both normal return and `pthread_exit`. Its
+attribute-preserving interface publishes the native identity before completion
+can be queued. The reaper joins kernel termination before freeing native
+resources, even when later TLS destructors are still active. One reaper and one
+completion TLS key remain for process lifetime.
+
+See the [thread probe](../../src/coreclr/pal/tests/libnx/threads/README.md)
+for the required libnx source revision, staging instructions and native boundary
+checks. Usable stack size excludes libnx bootstrap storage; the probe compares
+relative requested-size increments without depending on that private layout.
+
+The Horizon cross-configuration records procfs and file-backed mmap-pager
+features as unavailable, including their cached exit codes on reconfiguration.
+The native thread probe does not initialize managed CoreCLR or exercise a full
+PAL thread/GC-suspension lifecycle.
