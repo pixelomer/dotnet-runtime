@@ -116,3 +116,21 @@ roots across compacting collections. The workload checks root contents,
 relocation and bounded worker shutdown under the native suspension watchdog.
 It uses the source-built framework and supports FullOpts and MinOpts.
 See the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md).
+
+## Tiered compilation and collectible lifetimes
+
+The host's soak workload keeps object and interior roots live in call-free hot
+loops while allocating arrays, creating short-lived workers, running finalizers
+and loading/unloading collectible assembly contexts. Its own deployed Probe.dll
+is the collectible assembly input; no external application data is required.
+
+The host enables tiered and quick loop compilation. The optional trace selects
+Soak:HotLoop so emitted tiers and on-stack replacement can be inspected.
+Native deadlines cover complete rounds, including allocation-triggered
+collections, worker retirement and unloading; round timings are not isolated
+GC pauses. Managed and native memory counters describe different allocations
+and are not interchangeable with process-wide memory usage.
+
+See the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md) for the
+source-built framework, selected output/deployment and overwritten log paths.
+The bounded workload does not establish unlimited runtime lifetime.

@@ -42,7 +42,7 @@ parser.add_argument('--jit-trace', action='store_true')
 parser.add_argument('--framework', type=Path, help='Override compatible source-built framework assemblies')
 parser.add_argument('--corelib', type=Path, help='Override CoreLib for explicit compatibility controls')
 parser.add_argument('--minopts', action='store_true', help='Exercise minimum-optimization JIT code generation')
-parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows'], default='basic')
+parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows', 'soak'], default='basic')
 args = parser.parse_args()
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
@@ -64,12 +64,14 @@ output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS'] + ['-I' + str(repo/'src/coreclr/hosts/inc')]
 if args.jit_trace:
     compile_flags += ["-DHOST_JIT_TRACE"]
-if args.probe in ('suspension', 'suspension-flows'):
+if args.probe in ('suspension', 'suspension-flows', 'soak'):
     compile_flags += ['-DHOST_SUSPENSION_PROBE']
-if args.probe in ('bcl', 'sockets', 'suspension-flows'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak'):
     compile_flags += ['-DHOST_BCL_PROBE']
 if args.probe == 'sockets':
     compile_flags += ['-DHOST_SOCKET_PROBE']
+if args.probe == 'soak':
+    compile_flags += ['-DHOST_SOAK_PROBE']
 if args.minopts:
     compile_flags += ['-DHOST_MINOPTS']
 objects = []
@@ -122,7 +124,7 @@ if managed.exists():
     shutil.rmtree(managed)
 managed.mkdir()
 references = []
-if args.probe in ('bcl', 'sockets', 'suspension-flows'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak'):
     framework = args.framework or repo / 'artifacts/bin/runtime/net10.0-libnx-Release-arm64'
     if not (framework / 'System.Runtime.dll').is_file():
         parser.error('Build libs.sfx for CoreCLR/libnx before the BCL probe')
@@ -136,7 +138,7 @@ sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
 subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
                 '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
                 '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
-                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs'}[args.probe])], check=True)
+                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs'}[args.probe])], check=True)
 with (output/'qcall-validation.json').open('w') as result:
     subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
                     str(target.with_suffix('.elf'))], stdout=result, check=True)
@@ -151,7 +153,7 @@ for line in target.with_suffix('.map').read_text().splitlines():
         path = Path(line[5:].strip())
         if path.is_file():
             linked_inputs[str(path.resolve())] = digest(path)
-managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs'}[args.probe]
+managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs'}[args.probe]
 snapshot = output/'source-snapshot'
 if snapshot.exists():
     shutil.rmtree(snapshot)

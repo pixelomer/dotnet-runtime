@@ -16,7 +16,7 @@ static void Report(int phase, int value) {
         fprintf(output, "POLL_IDLE calls=%llu window_ms=%d\n", (unsigned long long)calls, value);
         excessivePolls |= calls > 100;
     }
-    fprintf(output, "MANAGED phase=%d value=%d native_used=%d\n", phase, value, mallinfo().uordblks);
+    fprintf(output, "MANAGED phase=%d value=%d native_used=%zu\n", phase, value, mallinfo().uordblks);
 }
 static void* Watchdog(void*) {
     uint64_t begin = armGetSystemTick();

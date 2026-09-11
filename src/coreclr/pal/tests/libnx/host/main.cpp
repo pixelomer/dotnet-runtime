@@ -4,6 +4,9 @@
 #include <cstring>
 #include <string>
 #include <dirent.h>
+#ifdef HOST_SOAK_PROBE
+#include <malloc.h>
+#endif
 #include "coreclrhost.h"
 #if defined(HOST_SUSPENSION_PROBE) || defined(HOST_BCL_PROBE)
 #include <pthread.h>
@@ -43,12 +46,17 @@ static void* SuspensionWatchdog(void*)
 #endif
 #ifdef HOST_BCL_PROBE
 static int bclComplete;
+#ifdef HOST_SOAK_PROBE
+static constexpr uint64_t BclTimeoutSeconds = 240;
+#else
+static constexpr uint64_t BclTimeoutSeconds = 120;
+#endif
 static void* BclWatchdog(void*)
 {
     uint64_t begin = armGetSystemTick();
     while (!__atomic_load_n(&bclComplete, __ATOMIC_ACQUIRE)) {
         // Do not acquire application or stdio locks after the deadline.
-        if (armTicksToNs(armGetSystemTick() - begin) >= 120000000000ULL) svcExitProcess();
+        if (armTicksToNs(armGetSystemTick() - begin) >= BclTimeoutSeconds * 1000000000ULL) svcExitProcess();
         svcSleepThread(10000000);
     }
     return nullptr;
@@ -78,6 +86,17 @@ extern "C" void HostManagedProgress(int phase, int value) {
         uint64_t calls = HostSocketPollEnd();
         fprintf(output, "POLL_IDLE calls=%llu window_ms=%d\n", (unsigned long long)calls, value);
         excessiveSocketPolls |= calls > 100;
+    }
+#endif
+#ifdef HOST_SOAK_PROBE
+    if (phase >= 90 || phase == 52 || phase == 54) {
+        FILE* progress = fopen("sdmc:/switch/coreclr-soak-progress.txt", "a");
+        if (progress) {
+            uint64_t used = 0;
+            Result processResult = svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+            fprintf(progress, "phase=%d value=%d native_used=%zu process_used=%llu process_info_result=%08x\n", phase, value, mallinfo().uordblks, (unsigned long long)used, processResult);
+            fclose(progress);
+        }
     }
 #endif
     if (output) fprintf(output, "MANAGED phase=%d value=%d\n", phase, value);
@@ -133,6 +152,17 @@ int main(int argc, char** argv)
     if (R_FAILED(socketResult)) return 1;
     // The socket engine is a background thread. BSD remains alive until exit.
 #endif
+#ifdef HOST_SOAK_PROBE
+    remove("sdmc:/switch/coreclr-soak-progress.txt");
+    setenv("DOTNET_TieredCompilation", "1", 1);
+    setenv("DOTNET_TC_QuickJit", "1", 1);
+    setenv("DOTNET_TC_QuickJitForLoops", "1", 1);
+    setenv("DOTNET_TC_AggressiveTiering", "1", 1);
+    setenv("DOTNET_TC_CallCountingDelayMs", "0", 1);
+#ifdef HOST_JIT_TRACE
+    setenv("DOTNET_JitDisasm", "Soak:HotLoop", 1);
+#endif
+#endif
     coreclr_set_error_writer(error_writer);
     void* host = nullptr;
     unsigned domain = 0;
@@ -159,7 +189,7 @@ int main(int argc, char** argv)
         const char* arguments[] = {reporter};
 #ifdef HOST_BCL_PROBE
         pthread_t bclWatchdog;
-        fprintf(output, "BCL_WATCHDOG timeout_seconds=120\n");
+        fprintf(output, "BCL_WATCHDOG timeout_seconds=%llu\n", (unsigned long long)BclTimeoutSeconds);
         if (pthread_create(&bclWatchdog, nullptr, BclWatchdog, nullptr) != 0) abort();
 #endif
 #ifdef HOST_SUSPENSION_PROBE

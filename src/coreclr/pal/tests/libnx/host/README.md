@@ -174,3 +174,38 @@ inspect actual loop and tail-call lowering. This variant disables tiered
 compilation and uses both the suspension and overall native watchdogs.
 Deploy its complete managed directory after each build. Compiler warning
 CS0649 for Root.Value reflects field writes emitted dynamically by the probe.
+
+## Tiered compilation and lifetime workload
+
+After building the source framework with libs.sfx, select the soak variant:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/host/build.py \
+  --probe soak --jit-trace --output artifacts/libnx-coreclr-soak
+```
+
+Deploy its complete managed directory to the documented SD destination.
+Soak.cs loads its own `/switch/coreclr-probe/Probe.dll` in collectible
+contexts, invokes Compute and checks unload through weak references.
+Keep the deployed Probe.dll matched to the selected workload.
+
+Four persistent workers retain object/interior roots in call-free HotLoop
+methods. Each round allocates arrays, creates and joins transient workers,
+checks thread-static isolation, runs finalizers and unloads a collectible
+context. The workload stops after three minutes or 180 rounds, or on timeout.
+These are workload limits, not measured throughput.
+
+The native host enables tiered compilation, quick JIT for loops and aggressive
+tiering. With `--jit-trace`, disassembly is restricted to Soak:HotLoop; inspect
+the emitted tiers and any on-stack replacement rather than inferring them from
+a source option. The three-second watchdog covers the entire round, not only
+explicit collections. The outer process watchdog allows 240 seconds.
+Exit 100 requires intact roots, observed relocation and no round timeout;
+a round timeout returns 101 after releasing workers.
+
+The host removes `/switch/coreclr-soak-progress.txt` before startup and appends
+progress/memory samples by opening and closing it for each update. Preserve any
+existing file before running, along with the ordinary host and disassembly
+logs described above. Managed live-memory, native allocation and Horizon
+process-used counters have different scopes; none alone proves an absence of
+leaks or represents an isolated GC pause.
