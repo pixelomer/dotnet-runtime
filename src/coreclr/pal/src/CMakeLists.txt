@@ -131,7 +131,7 @@ if (CLR_CMAKE_TARGET_ARCH_WASM)
   )
 endif()
 
-if(NOT CLR_CMAKE_TARGET_APPLE AND NOT CLR_CMAKE_TARGET_ARCH_WASM)
+if(NOT CLR_CMAKE_TARGET_APPLE AND NOT CLR_CMAKE_TARGET_ARCH_WASM AND NOT CLR_CMAKE_TARGET_LIBNX)
   list(APPEND PLATFORM_SOURCES
     arch/${PAL_ARCH_SOURCES_DIR}/callsignalhandlerwrapper.S
     arch/${PAL_ARCH_SOURCES_DIR}/signalhandlerhelper.cpp
@@ -218,10 +218,12 @@ set(SOURCES
 if(CLR_CMAKE_TARGET_LIBNX)
   # Horizon/newlib has no POSIX resource-limit API.
   add_definitions(-DDONT_SET_RLIMIT_NOFILE)
-  list(REMOVE_ITEM SOURCES map/virtual.cpp)
-  list(APPEND SOURCES thread/libnx/threadplatform.cpp exception/libnx/unwind.cpp map/libnx/virtual.cpp map/libnx/mapping.cpp map/libnx/pread.c
+  list(REMOVE_ITEM SOURCES map/virtual.cpp exception/signal.cpp)
+  list(APPEND ARCH_SOURCES exception/libnx/exceptions.S)
+  list(APPEND SOURCES exception/libnx/exceptions.cpp thread/libnx/threadplatform.cpp exception/libnx/unwind.cpp map/libnx/virtual.cpp map/libnx/mapping.cpp map/libnx/pread.c
     ${CLR_SRC_NATIVE_DIR}/libs/Common/nxvm.c
-    ${CLR_SRC_NATIVE_DIR}/libs/Common/pal_threading_libnx.c)
+    ${CLR_SRC_NATIVE_DIR}/libs/Common/pal_threading_libnx.c
+    ${CLR_SRC_NATIVE_DIR}/libs/Common/libnx_threads.c)
   set_source_files_properties(exception/libnx/unwind.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${CLR_SRC_NATIVE_DIR}/external/llvm-libunwind/include"
     COMPILE_DEFINITIONS "_LIBUNWIND_IS_NATIVE_ONLY;_LIBUNWIND_DISABLE_ZERO_COST_APIS=1"

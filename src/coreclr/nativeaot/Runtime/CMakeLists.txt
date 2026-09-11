@@ -169,7 +169,8 @@ else()
     list(APPEND COMMON_RUNTIME_SOURCES
       ${CLR_DIR}/../native/libs/Common/pal_threading_libnx.c
       ${CLR_DIR}/../native/libs/Common/nxvm.c
-      libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c libnx/LibnxThreads.c libnx/GCToOS.cpp)
+      libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c
+      ${CLR_DIR}/../native/libs/Common/libnx_threads.c libnx/GCToOS.cpp)
     # Horizon uses its own exception and suspension adapters instead of Linux
     # cgroups, NUMA, signal handlers and the subprocess crash dumper.
   else()

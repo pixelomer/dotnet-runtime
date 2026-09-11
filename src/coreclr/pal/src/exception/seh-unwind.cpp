@@ -23,6 +23,7 @@ Abstract:
 #include "pal.h"
 #if defined(TARGET_LIBNX)
 #include "pal/libnx/unwind.h"
+#include <malloc.h>
 #else
 #include <dlfcn.h>
 
@@ -814,7 +815,13 @@ VOID
 AllocateExceptionRecords(EXCEPTION_RECORD** exceptionRecord, CONTEXT** contextRecord)
 {
     ExceptionRecords* records;
+#if defined(TARGET_LIBNX)
+    // devkitPro newlib provides memalign/free, but no posix_memalign symbol.
+    records = static_cast<ExceptionRecords*>(memalign(alignof(ExceptionRecords), sizeof(ExceptionRecords)));
+    if (records == nullptr)
+#else
     if (posix_memalign((void**)&records, alignof(ExceptionRecords), sizeof(ExceptionRecords)) != 0)
+#endif
     {
         size_t bitmap;
         size_t newBitmap;

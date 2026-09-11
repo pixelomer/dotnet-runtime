@@ -13,7 +13,7 @@ SET_DEFAULT_DEBUG_CHANNEL(SHMEM); // some headers have code with asserts, so do 
 #include "pal/utils.h"
 
 #include <sys/file.h>
-#include <sys/mman.h>
+#include "pal/mapnative.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -24,6 +24,18 @@ SET_DEFAULT_DEBUG_CHANNEL(SHMEM); // some headers have code with asserts, so do 
 #include <unistd.h>
 
 using namespace CorUnix;
+
+static int SharedMemoryFileLock(int fileDescriptor, int operation)
+{
+#if defined(TARGET_LIBNX)
+    // Horizon fsdev has no cross-process advisory file-lock protocol. A local
+    // mutex cannot provide the required semantics for named PAL objects.
+    errno = ENOTSUP;
+    return -1;
+#else
+    return flock(fileDescriptor, operation);
+#endif
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // AutoFreeBuffer
@@ -674,8 +686,8 @@ void *SharedMemoryHelpers::MemoryMapFile(
     _ASSERTE(byteCount > sizeof(SharedMemorySharedDataHeader));
     _ASSERTE(AlignDown(byteCount, GetVirtualPageSize()) == byteCount);
 
-    void *sharedMemoryBuffer = mmap(nullptr, byteCount, PROT_READ | PROT_WRITE, MAP_SHARED, fileDescriptor, 0);
-    if (sharedMemoryBuffer != MAP_FAILED)
+    void *sharedMemoryBuffer = NativeMap(nullptr, byteCount, MapRead | MapWrite, MapShared, fileDescriptor, 0);
+    if (sharedMemoryBuffer != MapFailed)
     {
         return sharedMemoryBuffer;
     }
@@ -717,7 +729,7 @@ bool SharedMemoryHelpers::TryAcquireFileLock(SharedMemorySystemCallErrors *error
 
     while (true)
     {
-        int flockResult = flock(fileDescriptor, operation);
+        int flockResult = SharedMemoryFileLock(fileDescriptor, operation);
         if (flockResult == 0)
         {
             return true;
@@ -760,7 +772,7 @@ void SharedMemoryHelpers::ReleaseFileLock(int fileDescriptor)
     int flockResult;
     do
     {
-        flockResult = flock(fileDescriptor, LOCK_UN);
+        flockResult = SharedMemoryFileLock(fileDescriptor, LOCK_UN);
     } while (flockResult != 0 && errno == EINTR);
 }
 
@@ -1012,7 +1024,7 @@ SharedMemoryProcessDataHeader *SharedMemoryProcessDataHeader::CreateOrOpen(
             if (m_mappedBuffer != nullptr)
             {
                 _ASSERTE(m_mappedBufferByteCount != 0);
-                munmap(m_mappedBuffer, m_mappedBufferByteCount);
+                NativeUnmap(m_mappedBuffer, m_mappedBufferByteCount);
             }
 
             if (m_acquiredFileLock)
@@ -1366,7 +1378,7 @@ void SharedMemoryProcessDataHeader::Close()
             m_sharedDataHeader->~SharedMemorySharedDataHeader();
         }
 
-        munmap(m_sharedDataHeader, m_sharedDataTotalByteCount);
+        NativeUnmap(m_sharedDataHeader, m_sharedDataTotalByteCount);
         SharedMemoryHelpers::CloseFile(m_fileDescriptor);
     }
 

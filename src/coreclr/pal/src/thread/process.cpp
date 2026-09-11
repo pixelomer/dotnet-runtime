@@ -59,6 +59,12 @@ SET_DEFAULT_DEBUG_CHANNEL(PROCESS); // some headers have code with asserts, so d
 #include <stdint.h>
 #include <limits.h>
 #include <vector>
+#ifdef TARGET_LIBNX
+#include <libs/Common/libnx_threads.h>
+extern "C" {
+#include <switch/runtime/env.h>
+}
+#endif
 
 #ifdef __linux__
 #include <linux/membarrier.h>
@@ -2419,7 +2425,8 @@ PROCCreateCrashDump(
     INT cbErrorMessageBuffer,
     bool serialize)
 {
-#if defined(TARGET_IOS) || defined(TARGET_TVOS)
+#if defined(TARGET_IOS) || defined(TARGET_TVOS) || defined(TARGET_LIBNX)
+    SetLastError(ERROR_NOT_SUPPORTED);
     return FALSE;
 #else
     _ASSERTE(argv.size() > 0);
@@ -2615,6 +2622,12 @@ PROCAbortInitialize()
     DWORD enabled = 0;
     if (enabledCfg.IsSet() && enabledCfg.TryAsInteger(10, enabled) && enabled)
     {
+#ifdef TARGET_LIBNX
+        // Horizon has no fork/exec crash-dump utility. Do not accept this option
+        // and then silently skip the dump when a crash occurs.
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+#else
         CLRConfigNoCache dmpNameCfg = CLRConfigNoCache::Get("DbgMiniDumpName", /*noprefix*/ false, &getenv);
         const char* dumpName = dmpNameCfg.IsSet() ? dmpNameCfg.AsString() : nullptr;
 
@@ -2664,6 +2677,7 @@ PROCAbortInitialize()
         {
             return FALSE;
         }
+#endif
     }
     return TRUE;
 }
@@ -2733,7 +2747,7 @@ Parameters:
 
 (no return value)
 --*/
-#ifdef HOST_ANDROID
+#if defined(HOST_ANDROID) || defined(TARGET_LIBNX)
 #include <minipal/log.h>
 VOID
 PROCCreateCrashDumpIfEnabled(int signal, siginfo_t* siginfo, bool serialize)
@@ -2856,6 +2870,11 @@ Return
 BOOL
 InitializeFlushProcessWriteBuffers()
 {
+#ifdef TARGET_LIBNX
+    // SEHEnable registers every PAL-attached thread before runtime execution.
+    // Use the shared native pause/resume protocol, not Linux mprotect/IPI guesses.
+    return envIsSyscallHinted(0x32) && envIsSyscallHinted(0x33);
+#else
     _ASSERTE(s_helperPage == 0);
     _ASSERTE(s_flushUsingMemBarrier == 0);
 
@@ -2915,6 +2934,7 @@ InitializeFlushProcessWriteBuffers()
 
     return status == 0;
 #endif // TARGET_APPLE || TARGET_WASM
+#endif // TARGET_LIBNX
 }
 
 #define FATAL_ASSERT(e, msg) \
@@ -2938,6 +2958,9 @@ VOID
 PALAPI
 FlushProcessWriteBuffers()
 {
+#ifdef TARGET_LIBNX
+    LibnxFlushProcessWriteBuffers();
+#else
 #ifndef TARGET_WASM
 #if defined(__linux__) || HAVE_SYS_MEMBARRIER_H
     if (s_flushUsingMemBarrier)
@@ -2999,6 +3022,7 @@ FlushProcessWriteBuffers()
     }
 #endif // TARGET_APPLE
 #endif // !TARGET_WASM
+#endif // TARGET_LIBNX
 }
 
 /*++

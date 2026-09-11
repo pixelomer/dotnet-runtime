@@ -1,9 +1,14 @@
-#include "LibnxThreads.h"
-#include "LibnxPlatform.h"
+#include "libnx_threads.h"
 #include <switch.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+
+static Handle CurrentThreadHandle(void)
+{
+    Thread* thread = threadGetSelf();
+    return thread ? thread->handle : INVALID_HANDLE;
+}
 
 struct LibnxThreadRegistration
 {
@@ -17,7 +22,7 @@ static LibnxThreadRegistration* registrations;
 
 LibnxThreadRegistration* LibnxRegisterCurrentThread(void)
 {
-    Handle handle = LibnxGetCurrentThreadHandle();
+    Handle handle = CurrentThreadHandle();
     if (handle == INVALID_HANDLE) return NULL;
     // Allocate outside the registry lock. While a target is paused we must
     // never enter malloc, stdio, runtime locks, or arbitrary callbacks.
@@ -50,7 +55,7 @@ bool LibnxUnregisterThread(LibnxThreadRegistration* registration)
     mutexLock(&registryLock);
     LibnxThreadRegistration** cursor = &registrations;
     while (*cursor && *cursor != registration) cursor = &(*cursor)->next;
-    if (*cursor && !registration->paused && registration->handle == LibnxGetCurrentThreadHandle())
+    if (*cursor && !registration->paused && registration->handle == CurrentThreadHandle())
     {
         success = true;
         if (--registration->references == 0)
@@ -69,7 +74,7 @@ bool LibnxPauseRegisteredThread(LibnxThreadRegistration* r, ThreadContext* conte
     if (!r || !context) return false;
     mutexLock(&registryLock);
     bool success = false;
-    if (!r->paused && r->handle != LibnxGetCurrentThreadHandle() &&
+    if (!r->paused && r->handle != CurrentThreadHandle() &&
         R_SUCCEEDED(svcSetThreadActivity(r->handle, ThreadActivity_Paused)))
     {
         r->paused = true;
@@ -104,15 +109,15 @@ void LibnxFlushProcessWriteBuffers(void)
     // and GC locks. No path holds this lock while waiting for those locks.
     mutexLock(&registryLock);
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    Handle current = LibnxGetCurrentThreadHandle();
+    Handle current = CurrentThreadHandle();
     for (LibnxThreadRegistration* r = registrations; r; r = r->next)
     {
         if (r->handle == current || r->paused) continue;
         if (R_FAILED(svcSetThreadActivity(r->handle, ThreadActivity_Paused))) abort();
         // SetActivity waits for the kernel's atomically published switch-away.
         // Resume then publishes this caller's preceding writes through the
-        // scheduler synchronization path. See THREAD_ORDERING.md for the exact
-        // kernel version and limits; a local fence alone is not this protocol.
+        // scheduler synchronization path. See the repository's
+        // src/coreclr/nativeaot/Runtime/libnx/THREAD_ORDERING.md for its limits.
         if (R_FAILED(svcSetThreadActivity(r->handle, ThreadActivity_Runnable))) abort();
     }
     __atomic_thread_fence(__ATOMIC_SEQ_CST);

@@ -26,6 +26,9 @@ Abstract:
 #include "pal/process.h"
 #include "pal/signal.hpp"
 #include "pal/virtual.h"
+#ifdef TARGET_LIBNX
+#include "libnx/exceptions.h"
+#endif
 
 #if HAVE_MACH_EXCEPTIONS
 #include "machexception.h"
@@ -301,7 +304,9 @@ Return value :
 extern "C"
 PAL_ERROR SEHEnable(CPalThread *pthrCurrent)
 {
-#if HAVE_MACH_EXCEPTIONS
+#if defined(TARGET_LIBNX)
+    return PAL_LibnxEnableExceptions() ? NO_ERROR : ERROR_NOT_ENOUGH_MEMORY;
+#elif HAVE_MACH_EXCEPTIONS
     return pthrCurrent->EnableMachExceptions();
 #elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__sun) || defined(__HAIKU__) || defined(__APPLE__) || defined(__wasm__)
     return NO_ERROR;
@@ -326,7 +331,10 @@ Return value :
 extern "C"
 PAL_ERROR SEHDisable(CPalThread *pthrCurrent)
 {
-#if HAVE_MACH_EXCEPTIONS
+#if defined(TARGET_LIBNX)
+    PAL_LibnxDisableExceptions();
+    return NO_ERROR;
+#elif HAVE_MACH_EXCEPTIONS
     return pthrCurrent->DisableMachExceptions();
 #elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__sun) || defined(__HAIKU__) || defined(__APPLE__) || defined(__wasm__)
     return NO_ERROR;

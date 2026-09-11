@@ -278,7 +278,7 @@ LOCAL_LABEL(No_Restore_CONTEXT_CONTROL):
 
 LEAF_END RtlRestoreContext, _TEXT
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(TARGET_LIBNX)
 
 // Incoming:
 //  x0: Context*
