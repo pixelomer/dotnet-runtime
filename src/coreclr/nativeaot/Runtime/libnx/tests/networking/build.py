@@ -53,7 +53,7 @@ if not args.unix_sockets_control:
 asm=subprocess.check_output(['aarch64-none-elf-objdump','-dr',str(obj)],text=True)
 if re.search(r'\btpidr_el0\b|R_AARCH64_TLS',asm,re.I):raise SystemExit('Linux TLS code remains')
 subprocess.run(['python3',str(here.parent.parent/'create-linker-script.py'),str(out/'switch.ld')],check=True)
-flags=['-g','-O2','-march=armv8-a+crc+crypto','-mtune=cortex-a57','-mtp=soft','-fPIE','-ffunction-sections','-fdata-sections','-fno-rtti','-fno-exceptions','-D__SWITCH__','-I'+str(dkp/'libnx/include'),'-I'+str(icu/'include')]
+flags=['-g','-O2','-march=armv8-a+crc+crypto','-mtune=cortex-a57','-mtp=soft','-fPIE','-ffunction-sections','-fdata-sections','-fno-rtti','-fno-exceptions','-D__SWITCH__','-DU_DISABLE_RENAMING=1','-I'+str(dkp/'libnx/include'),'-I'+str(icu/'include')]
 # Replace only the script reference; switch.specs always injects its own -T.
 specs=(dkp/'libnx/switch.specs').read_text()
 anchor='-T %:getenv(DEVKITPRO /libnx/switch.ld)'
