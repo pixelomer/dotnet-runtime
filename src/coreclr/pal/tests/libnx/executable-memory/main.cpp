@@ -10,6 +10,7 @@ extern "C" {
 #include <pthread.h>
 #include <malloc.h>
 extern "C" { unsigned __nx_applet_exit_mode = 1; }
+static FILE* output;
 // Link-time wrappers inject one failure at the Horizon boundary; successful
 // operations still use the real kernel. Production allocator has no test hooks.
 static std::atomic<int> failCreate{0}, failOwner{0}, failSlave{0};
@@ -21,15 +22,18 @@ extern "C" Result __real_svcCreateCodeMemory(Handle*, void*, u64);
 extern "C" Result __real_svcControlCodeMemory(Handle, CodeMapOperation, void*, u64, u64);
 extern "C" Result __wrap_svcCreateCodeMemory(Handle* handle, void* source, u64 size) {
     if (injected(failCreate)) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    return __real_svcCreateCodeMemory(handle, source, size);
+    Result rc = __real_svcCreateCodeMemory(handle, source, size);
+    if (R_FAILED(rc)) fprintf(output, "KERNEL create size=%lu rc=%08x\n", size, rc);
+    return rc;
 }
 extern "C" Result __wrap_svcControlCodeMemory(Handle handle, CodeMapOperation op, void* address, u64 size, u64 permission) {
     if ((op == CodeMapOperation_MapOwner && injected(failOwner)) ||
         (op == CodeMapOperation_MapSlave && injected(failSlave)))
         return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    return __real_svcControlCodeMemory(handle, op, address, size, permission);
+    Result rc = __real_svcControlCodeMemory(handle, op, address, size, permission);
+    if (R_FAILED(rc)) fprintf(output, "KERNEL control op=%u address=%p size=%lu perm=%lu rc=%08x\n", unsigned(op), address, size, permission, rc);
+    return rc;
 }
-static FILE* output;
 static std::atomic<unsigned> checks{0};
 using VM = VMToOSInterface;
 using Function = uint64_t (*)();
