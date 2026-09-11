@@ -9,6 +9,10 @@ set(CLR_SOURCES
     exports.cpp
 )
 
+if(CLR_CMAKE_TARGET_LIBNX)
+    list(APPEND CLR_SOURCES exports-libnx.cpp)
+endif()
+
 if(CLR_CMAKE_TARGET_WIN32)
 list(APPEND CLR_SOURCES
     ${CLR_SRC_NATIVE_DIR}/libs/Common/delayloadhook_windows.cpp

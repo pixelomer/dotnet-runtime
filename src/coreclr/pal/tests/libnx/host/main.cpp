@@ -8,6 +8,12 @@
 #include <malloc.h>
 #endif
 #include "coreclrhost.h"
+#ifndef HOST_MANAGED_DIR
+#define HOST_MANAGED_DIR "/switch/coreclr-probe"
+#endif
+#ifndef HOST_LOG_PREFIX
+#define HOST_LOG_PREFIX "/switch/coreclr-host"
+#endif
 #if defined(HOST_SUSPENSION_PROBE) || defined(HOST_BCL_PROBE)
 #include <pthread.h>
 extern "C" {
@@ -117,14 +123,16 @@ extern "C" void HostManagedProgress(int phase, int value) {
 }
 extern "C" void HostFlushDiagnostics() { fflush(nullptr); }
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
+// Optional integration object, registered through the ordinary embedding API.
+extern "C" void* HostResolvePInvoke(const char* library, const char* entry) __attribute__((weak));
 int main(int argc, char** argv)
 {
-    output = fopen("sdmc:/switch/coreclr-host-probe.txt", "w");
+    output = fopen("sdmc:" HOST_LOG_PREFIX "-probe.txt", "w");
     if (!output) return 1;
     setvbuf(output, nullptr, _IONBF, 0);
-    if (freopen("sdmc:/switch/coreclr-host-stderr.txt", "w", stderr))
+    if (freopen("sdmc:" HOST_LOG_PREFIX "-stderr.txt", "w", stderr))
         setvbuf(stderr, nullptr, _IONBF, 0);
-    if (freopen("sdmc:/switch/coreclr-host-stdout.txt", "w", stdout))
+    if (freopen("sdmc:" HOST_LOG_PREFIX "-stdout.txt", "w", stdout))
         setvbuf(stdout, nullptr, _IONBF, 0);
     fprintf(output, "BEGIN embedded CoreCLR host initialize=%p\n", reinterpret_cast<void*>(coreclr_initialize));
     if (argc < 1 || !argv[0]) { fprintf(output, "FAIL missing loader executable path\n"); return 1; }
@@ -171,19 +179,21 @@ int main(int argc, char** argv)
     void* host = nullptr;
     unsigned domain = 0;
     std::string platformAssemblies;
-    DIR* assemblies = opendir("sdmc:/switch/coreclr-probe");
+    DIR* assemblies = opendir("sdmc:" HOST_MANAGED_DIR);
     if (!assemblies) { fprintf(output, "FAIL missing managed deployment\n"); return 1; }
     while (dirent* entry = readdir(assemblies)) {
         size_t length = strlen(entry->d_name);
         if (length < 4 || strcmp(entry->d_name + length - 4, ".dll") != 0 || strcmp(entry->d_name, "Probe.dll") == 0) continue;
         if (!platformAssemblies.empty()) platformAssemblies += ':';
-        platformAssemblies += "/switch/coreclr-probe/";
+        platformAssemblies += HOST_MANAGED_DIR "/";
         platformAssemblies += entry->d_name;
     }
     closedir(assemblies);
-    const char* keys[] = {"APP_PATHS", "TRUSTED_PLATFORM_ASSEMBLIES", "System.Globalization.Invariant"};
-    const char* values[] = {"/switch/coreclr-probe", platformAssemblies.c_str(), "true"};
-    int result = coreclr_initialize(argv[0], "Horizon CoreCLR probe", 3, keys, values, &host, &domain);
+    char resolver[32];
+    snprintf(resolver, sizeof(resolver), "%llu", (unsigned long long)reinterpret_cast<uintptr_t>(HostResolvePInvoke));
+    const char* keys[] = {"APP_PATHS", "TRUSTED_PLATFORM_ASSEMBLIES", "System.Globalization.Invariant", "PINVOKE_OVERRIDE"};
+    const char* values[] = {HOST_MANAGED_DIR, platformAssemblies.c_str(), "true", resolver};
+    int result = coreclr_initialize(argv[0], "Horizon CoreCLR probe", HostResolvePInvoke ? 4 : 3, keys, values, &host, &domain);
     fprintf(output, "coreclr_initialize result=%08x host=%p domain=%u\n", result, host, domain);
     if (result < 0) HostDumpStackMap();
     if (result >= 0) {
@@ -202,12 +212,12 @@ int main(int argc, char** argv)
         char control[32];
         snprintf(control, sizeof(control), "%llu", (unsigned long long)reinterpret_cast<uintptr_t>(suspensionControl));
         const char* suspensionArguments[] = {reporter, control};
-        result = coreclr_execute_assembly(host, domain, 2, suspensionArguments, "/switch/coreclr-probe/Probe.dll", &exit_code);
+        result = coreclr_execute_assembly(host, domain, 2, suspensionArguments, HOST_MANAGED_DIR "/Probe.dll", &exit_code);
         // Also release the native waiter if managed startup returned early.
         __atomic_store_n(&suspensionControl[2], -1, __ATOMIC_RELEASE);
         pthread_join(watchdog, nullptr);
 #else
-        result = coreclr_execute_assembly(host, domain, 1, arguments, "/switch/coreclr-probe/Probe.dll", &exit_code);
+        result = coreclr_execute_assembly(host, domain, 1, arguments, HOST_MANAGED_DIR "/Probe.dll", &exit_code);
 #endif
 #ifdef HOST_BCL_PROBE
         __atomic_store_n(&bclComplete, 1, __ATOMIC_RELEASE);

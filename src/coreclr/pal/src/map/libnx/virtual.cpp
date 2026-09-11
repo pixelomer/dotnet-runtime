@@ -4,6 +4,8 @@ namespace CorUnix { class CPalThread; }
 #include "pal/mapnative.h"
 #include "pal/modulenative.h"
 #include <errno.h>
+#include <stdio.h>
+extern "C" void LibnxRuntimeDiagnostic(const char*) __attribute__((weak));
 extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/runtime/env.h>
@@ -231,31 +233,51 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     {
         if (errno != ENOENT)
         {
+            if (LibnxRuntimeDiagnostic) {
+                char message[120]; snprintf(message, sizeof(message), "VirtualProtect NativeProtect rejected address=%p size=%zu errno=%d", address, size, errno);
+                LibnxRuntimeDiagnostic(message);
+            }
             SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
         }
         Result rc = svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission);
         if (R_FAILED(rc))
         {
-            // NRO read-only data starts in code state. Its first write requires
+            // NRO read-only data can start in code state. Its first write requires
             // the process-memory API; it then becomes ordinary non-executable
             // code-data, whose later permissions use SetMemoryPermission.
             // Restrict this irreversible transition to the NRO's declared data
-            // segment. Text must retain executable capability and use aliases.
+            // segments. RELRO (including C++ vtables) belongs to the data segment,
+            // even though the loader makes it read-only after relocations. Text
+            // must retain executable capability and use aliases.
             NativeModuleInfo module;
             NativeModuleRange ranges[3];
             if ((permission & Perm_X) ||
                 !NativeModuleFromAddress(reinterpret_cast<void*>(start), &module) ||
                 !NativeModuleRanges(module.base, ranges))
             {
+                if (LibnxRuntimeDiagnostic) LibnxRuntimeDiagnostic("VirtualProtect cannot identify resident NRO data");
                 SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
             }
-            uintptr_t ro = reinterpret_cast<uintptr_t>(ranges[1].start);
-            if (start < ro || start - ro > ranges[1].size || bytes > ranges[1].size - (start - ro))
+            bool inData = false;
+            for (unsigned i = 1; i < 3; ++i)
             {
+                uintptr_t base = reinterpret_cast<uintptr_t>(ranges[i].start);
+                inData |= start >= base && start - base <= ranges[i].size &&
+                          bytes <= ranges[i].size - (start - base);
+            }
+            if (!inData)
+            {
+                if (LibnxRuntimeDiagnostic) LibnxRuntimeDiagnostic("VirtualProtect range is outside resident NRO data");
                 SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
             }
             rc = svcSetProcessMemoryPermission(envGetOwnProcessHandle(), start, bytes, permission);
-            if (R_FAILED(rc)) { SetLastError(ERROR_NOT_SUPPORTED); return FALSE; }
+            if (R_FAILED(rc)) {
+                if (LibnxRuntimeDiagnostic) {
+                    char message[120]; snprintf(message, sizeof(message), "VirtualProtect SetProcessMemoryPermission failed address=%p size=%zu perm=%u result=%08x", address, size, permission, rc);
+                    LibnxRuntimeDiagnostic(message);
+                }
+                SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
+            }
         }
     }
     *oldProtect = old;

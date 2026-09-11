@@ -39,12 +39,25 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
 parser.add_argument('--output', type=Path, help='Keep a probe variant in a separate artifact directory')
 parser.add_argument('--jit-trace', action='store_true')
+parser.add_argument('--managed-source', type=Path, help='Original integration probe source to compile in place of the built-in probe')
+parser.add_argument('--managed-reference', type=Path, action='append', default=[], help='Additional IL-only reference to deploy')
+parser.add_argument('--native-object', type=Path, action='append', default=[], help='Additional reviewed native integration object')
+parser.add_argument('--export-symbol', action='append', default=[], help='Retain and export an explicit host integration entry point')
+parser.add_argument('--managed-directory', default='/switch/coreclr-probe', help='Absolute SD path without a device prefix')
+parser.add_argument('--log-prefix', default='/switch/coreclr-host', help='Absolute SD log prefix without a device prefix')
 parser.add_argument('--r2r-input', type=Path, help='Owned ReadyToRun control DLL for the r2r probe')
 parser.add_argument('--framework', type=Path, help='Override compatible source-built framework assemblies')
 parser.add_argument('--corelib', type=Path, help='Override CoreLib for explicit compatibility controls')
+parser.add_argument('--dotnet-root', type=Path, help='Reuse an explicitly selected SDK installation of the source-pinned version')
 parser.add_argument('--minopts', action='store_true', help='Exercise minimum-optimization JIT code generation')
 parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'], default='basic')
 args = parser.parse_args()
+for path in (args.managed_directory, args.log_prefix):
+    if not path.startswith('/switch/') or any(c in path for c in '\n\r"\\:') or '..' in Path(path).parts:
+        parser.error('Integration paths must be plain absolute paths under /switch')
+for symbol in args.export_symbol:
+    if not symbol or not all(c.isalnum() or c == '_' for c in symbol): parser.error('Invalid export symbol')
+
 if args.probe == 'r2r' and (args.r2r_input is None or not args.r2r_input.is_file()):
     parser.error('--r2r-input is required for the r2r probe')
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
@@ -65,6 +78,7 @@ for line in (build / 'CMakeCache.txt').read_text().splitlines():
 output = args.output.resolve() if args.output else repo / 'artifacts/libnx-coreclr-host'
 output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS'] + ['-I' + str(repo/'src/coreclr/hosts/inc')]
+compile_flags += ['-DHOST_MANAGED_DIR="' + args.managed_directory + '"', '-DHOST_LOG_PREFIX="' + args.log_prefix + '"']
 if args.jit_trace:
     compile_flags += ["-DHOST_JIT_TRACE"]
 if args.probe in ('suspension', 'suspension-flows', 'soak'):
@@ -88,6 +102,9 @@ for unit in units:
     unit_flags = compile_flags if unit.suffix == '.cpp' else flags['ASM_DEFINES'] + flags['ASM_INCLUDES'] + flags['ASM_FLAGS']
     subprocess.run([str(compiler), *unit_flags, '-c', str(unit), '-o', str(obj)], check=True)
     objects.append(str(obj))
+objects += [str(p.resolve()) for p in args.native_object]
+for symbol in args.export_symbol:
+    objects += ['-Wl,--undefined=' + symbol, '-Wl,--export-dynamic-symbol=' + symbol]
 # coreclr_static embeds VM, GC, JIT and object libraries. Real archive
 # dependencies remain separate, as in the upstream target's link interface.
 archives = [
@@ -138,14 +155,22 @@ if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'):
             continue
         shutil.copyfile(assembly, managed / assembly.name)
         references.append('-r:' + str(assembly))
+for assembly in args.managed_reference:
+    destination = managed/assembly.name
+    if destination.exists() and destination.read_bytes() != assembly.read_bytes():
+        parser.error('Managed reference collides with framework: ' + assembly.name)
+    if assembly.name in (corelib.name, 'Probe.dll'): parser.error('Reserved managed reference name')
+    shutil.copyfile(assembly, destination)
+    references.append('-r:' + str(assembly.resolve()))
 if args.probe == 'r2r':
     shutil.copyfile(args.r2r_input, managed/'OwnedReadyToRun.dll')
 shutil.copyfile(corelib, managed / corelib.name)
 sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
-subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
+dotnet_root = args.dotnet_root.resolve() if args.dotnet_root else repo/'.dotnet'
+subprocess.run([str(dotnet_root/'dotnet'), str(dotnet_root/'sdk'/sdk/'Roslyn/bincore/csc.dll'),
                 '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
                 '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
-                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe])], check=True)
+                str((args.managed_source.resolve() if args.managed_source else source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe]))], check=True)
 with (output/'qcall-validation.json').open('w') as result:
     subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
                     str(target.with_suffix('.elf'))], stdout=result, check=True)
@@ -165,7 +190,7 @@ for line in target.with_suffix('.map').read_text().splitlines():
         path = Path(line[5:].strip())
         if path.is_file():
             linked_inputs[str(path.resolve())] = digest(path)
-managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe]
+managed_source = (args.managed_source.resolve() if args.managed_source else source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe])
 snapshot = output/'source-snapshot'
 if snapshot.exists():
     shutil.rmtree(snapshot)
@@ -173,9 +198,11 @@ snapshot.mkdir()
 for path in [Path(__file__), validator, *units, managed_source]:
     shutil.copyfile(path, snapshot/path.name)
 manifest = {
+    'managed_directory': args.managed_directory, 'log_prefix': args.log_prefix, 'export_symbols': args.export_symbol,
+    'native_objects': {str(p.resolve()): digest(p) for p in args.native_object},
     'source_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
     'probe': args.probe, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
-    'source_sha256': {str(path.relative_to(repo)): digest(path) for path in [Path(__file__), validator, *units, managed_source]},
+    'source_sha256': {str(path.relative_to(repo) if path.is_relative_to(repo) else path): digest(path) for path in [Path(__file__), validator, *units, managed_source]},
     'corelib_input': str(corelib),
     'managed_sha256': {path.name: digest(path) for path in sorted(managed.glob('*.dll'))},
     'linked_input_sha256': linked_inputs,

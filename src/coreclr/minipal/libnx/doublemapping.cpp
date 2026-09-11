@@ -294,6 +294,23 @@ bool VMToOSInterface::ReleaseDoubleMappedMemory(void* handle, void* address, siz
     return true;
 }
 
+extern "C" bool LibnxIsOwnedCodeMemory(const void* address, size_t size) {
+    uintptr_t start = reinterpret_cast<uintptr_t>(address);
+    if (!size || size > UINTPTR_MAX - start) return false;
+    uintptr_t page = start & ~(uintptr_t)(Page - 1);
+    if (start + size > UINTPTR_MAX - (Page - 1)) return false;
+    size_t bytes = ((start + size + Page - 1) & ~(uintptr_t)(Page - 1)) - page;
+    Lock lock;
+    Region* r = FindRegion(page, bytes);
+    if (!r) return false;
+    for (uintptr_t current = page; current < page + bytes;) {
+        Chunk* c = FindChunk(r, current);
+        if (!c || !c->executable) return false;
+        current = c->primary + c->size;
+    }
+    return true;
+}
+
 extern "C" bool LibnxFlushCodeMemory(const void* address, size_t size) {
     uintptr_t start = reinterpret_cast<uintptr_t>(address);
     if (!size || size > UINTPTR_MAX - start) return false;

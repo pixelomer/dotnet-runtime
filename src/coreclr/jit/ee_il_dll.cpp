@@ -13,6 +13,9 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 */
 
 #include "jitpch.h"
+#ifdef TARGET_LIBNX
+#include <atomic>
+#endif
 #ifdef _MSC_VER
 #pragma hdrstop
 #endif
@@ -277,7 +280,15 @@ void JitTls::SetCompiler(Compiler* compiler)
 // interface. Things really don't get going inside the JIT until the code:Compiler::compCompile#Phases
 // method.  Usually that is where you want to go.
 
+#ifdef TARGET_LIBNX
+// The homebrew loader permanently locks RELRO, including this compiler's C++
+// vtable. Provide an explicit embedding callback instead of weakening RELRO or
+// depending on writable compiler-generated vtables. The original compiler body
+// is also callable by a hook without recursing through the dispatch callback.
+static CorJitResult LibnxCompileMethodOriginal(ICorJitCompiler*, ICorJitInfo* compHnd,
+#else
 CorJitResult CILJit::compileMethod(ICorJitInfo*         compHnd,
+#endif
                                    CORINFO_METHOD_INFO* methodInfo,
                                    unsigned             flags,
                                    uint8_t**            entryAddress,
@@ -309,6 +320,32 @@ CorJitResult CILJit::compileMethod(ICorJitInfo*         compHnd,
 
     return CorJitResult(result);
 }
+
+#ifdef TARGET_LIBNX
+using LibnxJitCompileCallback = CorJitResult (*)(ICorJitCompiler*, ICorJitInfo*, CORINFO_METHOD_INFO*,
+                                               unsigned, uint8_t**, uint32_t*);
+static std::atomic<LibnxJitCompileCallback> s_libnxCompileCallback{LibnxCompileMethodOriginal};
+
+extern "C" void* LibnxGetJitCompileCallback()
+{
+    return reinterpret_cast<void*>(s_libnxCompileCallback.load(std::memory_order_acquire));
+}
+
+extern "C" int LibnxSetJitCompileCallback(void* expected, void* callback)
+{
+    if (!expected || !callback) return 0;
+    auto previous = reinterpret_cast<LibnxJitCompileCallback>(expected);
+    return s_libnxCompileCallback.compare_exchange_strong(previous,
+        reinterpret_cast<LibnxJitCompileCallback>(callback), std::memory_order_acq_rel) ? 1 : 0;
+}
+
+CorJitResult CILJit::compileMethod(ICorJitInfo* compHnd, CORINFO_METHOD_INFO* methodInfo, unsigned flags,
+                                 uint8_t** entryAddress, uint32_t* nativeSizeOfCode)
+{
+    return s_libnxCompileCallback.load(std::memory_order_acquire)(this, compHnd, methodInfo, flags,
+                                                                 entryAddress, nativeSizeOfCode);
+}
+#endif
 
 void CILJit::ProcessShutdownWork(ICorStaticInfo* statInfo)
 {
