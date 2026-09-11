@@ -317,6 +317,10 @@ static int32_t ConvertOpenFlags(int32_t flags)
     return ret;
 }
 
+#if defined(TARGET_LIBNX)
+#include "pal_io_libnx.h"
+#endif
+
 intptr_t SystemNative_Open(const char* path, int32_t flags, int32_t mode)
 {
 // these two ifdefs are for platforms where we dont have the open version of CLOEXEC and thus
@@ -350,7 +354,9 @@ int32_t SystemNative_Close(intptr_t fd)
 intptr_t SystemNative_Dup(intptr_t oldfd)
 {
     int result;
-#if HAVE_F_DUPFD_CLOEXEC
+#if defined(TARGET_LIBNX)
+    result = LibnxDup(ToFileDescriptor(oldfd));
+#elif HAVE_F_DUPFD_CLOEXEC
     while ((result = fcntl(ToFileDescriptor(oldfd), F_DUPFD_CLOEXEC, 0)) < 0 && errno == EINTR);
 #elif HAVE_F_DUPFD
     while ((result = fcntl(ToFileDescriptor(oldfd), F_DUPFD, 0)) < 0 && errno == EINTR);
@@ -1234,7 +1240,14 @@ int32_t SystemNative_FAllocate(intptr_t fd, int64_t offset, int64_t length)
 
 int32_t SystemNative_Read(intptr_t fd, void* buffer, int32_t bufferSize)
 {
+#if defined(TARGET_LIBNX)
+    if (bufferSize < 0) { errno = EINVAL; return -1; }
+    ssize_t count;
+    while ((count = LibnxRead(ToFileDescriptor(fd), buffer, (size_t)bufferSize)) < 0 && errno == EINTR);
+    return (int32_t)count;
+#else
     return Common_Read(fd, buffer, bufferSize);
+#endif
 }
 
 int32_t SystemNative_ReadLink(const char* path, char* buffer, int32_t bufferSize)
@@ -1277,7 +1290,14 @@ void SystemNative_Sync(void)
 
 int32_t SystemNative_Write(intptr_t fd, const void* buffer, int32_t bufferSize)
 {
+#if defined(TARGET_LIBNX)
+    if (bufferSize < 0) { errno = EINVAL; return -1; }
+    ssize_t count;
+    while ((count = LibnxWrite(ToFileDescriptor(fd), buffer, (size_t)bufferSize)) < 0 && errno == EINTR);
+    return (int32_t)count;
+#else
     return Common_Write(fd, buffer, bufferSize);
+#endif
 }
 
 #if !HAVE_FCOPYFILE
