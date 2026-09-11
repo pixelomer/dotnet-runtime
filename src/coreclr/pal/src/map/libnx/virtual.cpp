@@ -2,6 +2,7 @@
 namespace CorUnix { class CPalThread; }
 #include "pal/virtual.h"
 #include "pal/mapnative.h"
+#include <errno.h>
 extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/kernel/mutex.h>
@@ -225,7 +226,7 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     int nativeProtection = protect == PAGE_READWRITE ? MapRead | MapWrite :
         protect == PAGE_EXECUTE_READ ? MapRead | MapExecute : protect == PAGE_READONLY ? MapRead : MapNone;
     if (!same && NativeProtect(reinterpret_cast<void*>(start), bytes, nativeProtection) != 0 &&
-        R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission)))
+        (errno != ENOENT || R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission))))
     {
         SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
     }
@@ -281,3 +282,14 @@ void PALAPI PAL_GetExecutableMemoryAllocatorPreferredRange(LPVOID* start, LPVOID
     *start = nullptr; *end = nullptr;
 }
 void* ReserveMemoryFromExecutableAllocator(CorUnix::CPalThread*, SIZE_T) { return nullptr; }
+
+PVOID PALAPI PAL_LOADAcquireWritableView(PVOID address, SIZE_T size)
+{
+    void* result = NativeAcquireWritableView(address, size);
+    if (!result) SetLastError(errno == ENOMEM ? ERROR_NOT_ENOUGH_MEMORY : ERROR_NOT_SUPPORTED);
+    return result;
+}
+void PALAPI PAL_LOADReleaseWritableView(PVOID address)
+{
+    NativeReleaseWritableView(address);
+}

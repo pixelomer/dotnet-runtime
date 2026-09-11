@@ -16,8 +16,10 @@ extern "C" {
 namespace {
 constexpr size_t Page = 4096;
 struct Backing { void* memory; size_t livePages; };
-struct Entry { Backing* backing; size_t offset; int protection; bool reserved, writableAllowed; };
+struct Entry { Backing* backing; size_t offset; int protection; bool reserved, writableAllowed, dataState; size_t writers; };
 struct Region { Region* next; uintptr_t base; size_t pages; Entry* entries; VirtmemReservation* reservation; };
+struct View { View* next; uintptr_t primary, writable; size_t bytes; void* result; VirtmemReservation* reservation; };
+View* views;
 Mutex mutex;
 Region* regions;
 struct Lock { Lock() { mutexLock(&mutex); } ~Lock() { mutexUnlock(&mutex); } };
@@ -139,7 +141,7 @@ void* NativeMap(void* address, size_t size, int protection, int flags, int fd, o
         free(backing->memory); free(backing); if (isNew) RemoveNew(r); return Fail(error);
     }
     backing->livePages = bytes / Page;
-    for (size_t i = 0; i < bytes / Page; ++i) r->entries[first + i] = {backing, i * Page, protection, true, anonymous || (flags & MapPrivate) != 0};
+    for (size_t i = 0; i < bytes / Page; ++i) r->entries[first + i] = {backing, i * Page, protection, true, anonymous || (flags & MapPrivate) != 0, permission == Perm_Rw, 0};
     if (protection & MapExecute) armICacheInvalidate(reinterpret_cast<void*>(base), bytes);
     return reinterpret_cast<void*>(base);
 }
@@ -149,6 +151,8 @@ static int UnmapLocked(void* address, size_t size) {
     Region* r = Find(base, bytes);
     if (!r) { errno = EINVAL; return -1; }
     size_t first = (base - r->base) / Page;
+    for (size_t i = first; i < first + bytes / Page; ++i)
+        if (r->entries[i].writers) { errno = EBUSY; return -1; }
     // An image's independent sections can be retired in any order. Keep the
     // original backing allocation until every mapped page referring to it is gone.
     for (size_t i = first; i < first + bytes / Page;) {
@@ -180,16 +184,99 @@ int NativeProtect(void* address, size_t size, int protection) {
     if (!Round(size, bytes) || !Range(base, bytes) || !ToPermission(protection, permission)) { errno = EINVAL; return -1; }
     Lock lock;
     Region* r = Find(base, bytes);
-    if (!r) { errno = EINVAL; return -1; }
-    size_t first = (base - r->base) / Page;
-    for (size_t i = first; i < first + bytes / Page; ++i)
-        if (!r->entries[i].backing) { errno = EINVAL; return -1; }
-        else if ((protection & MapWrite) && !r->entries[i].writableAllowed) { errno = EACCES; return -1; }
-    Result rc = svcSetProcessMemoryPermission(envGetOwnProcessHandle(), base, bytes, permission);
-    if (R_FAILED(rc)) { errno = ENOTSUP; return -1; }
-    for (size_t i = first; i < first + bytes / Page; ++i) r->entries[i].protection = protection;
-    if (protection & MapExecute) { armDCacheFlush(address, bytes); armICacheInvalidate(address, bytes); }
+    // Distinguish foreign memory from a rejected operation on our own mapping.
+    if (!r) {
+        for (Region* other = regions; other; other = other->next)
+            if (base < other->base + other->pages * Page && other->base < base + bytes) {
+                errno = EINVAL; return -1;
+            }
+        errno = ENOENT; return -1;
+    }
+    size_t first = (base - r->base) / Page, end = first + bytes / Page;
+    for (size_t i = first; i < end; ++i) {
+        const Entry& e = r->entries[i];
+        if (!e.backing) { errno = EINVAL; return -1; }
+        if ((protection & MapWrite) && !e.writableAllowed) { errno = EACCES; return -1; }
+        // AliasCode -> AliasCodeData is irreversible. Executable images must
+        // use writer aliases, never transiently remove/remap their primary view.
+        if (((protection & MapExecute) && e.dataState) ||
+            ((protection & MapWrite) && (e.protection & MapExecute))) { errno = ENOTSUP; return -1; }
+    }
+    size_t i = first;
+    for (; i < end; ++i) {
+        Entry& e = r->entries[i];
+        void* page = reinterpret_cast<void*>(r->base + i * Page);
+        Result rc = e.dataState ? svcSetMemoryPermission(page, Page, permission) :
+            svcSetProcessMemoryPermission(envGetOwnProcessHandle(), reinterpret_cast<uintptr_t>(page), Page, permission);
+        if (R_FAILED(rc)) break;
+        if (permission == Perm_Rw) e.dataState = true;
+    }
+    if (i != end) {
+        // Restore permissions changed before the failure. Data-state pages can
+        // restore R/None/RW, and prevalidation excluded an irreversible RX->RW.
+        while (i > first) {
+            Entry& e = r->entries[--i]; u32 old; ToPermission(e.protection, old);
+            void* page = reinterpret_cast<void*>(r->base + i * Page);
+            Require(e.dataState ? svcSetMemoryPermission(page, Page, old) :
+                svcSetProcessMemoryPermission(envGetOwnProcessHandle(), reinterpret_cast<uintptr_t>(page), Page, old));
+        }
+        errno = ENOTSUP; return -1;
+    }
+    for (size_t n = first; n < end; ++n) r->entries[n].protection = protection;
     return 0;
+}
+void* NativeAcquireWritableView(void* address, size_t size) {
+    uintptr_t value = reinterpret_cast<uintptr_t>(address), base = value & ~(Page - 1);
+    size_t bytes;
+    if (size == 0 || size > UINTPTR_MAX - value || !Round(size + (value - base), bytes)) { errno = EINVAL; return nullptr; }
+    if (!envIsSyscallHinted(0x74) || !envIsSyscallHinted(0x75)) { errno = ENOTSUP; return nullptr; }
+    Lock lock;
+    Region* r = Find(base, bytes);
+    if (!r) { errno = EINVAL; return nullptr; }
+    size_t first = (base - r->base) / Page;
+    for (size_t i = first; i < first + bytes / Page; ++i) {
+        const Entry& e = r->entries[i];
+        if (!e.backing || !e.writableAllowed || e.writers == SIZE_MAX) { errno = EACCES; return nullptr; }
+    }
+    View* v = static_cast<View*>(calloc(1, sizeof(View)));
+    if (!v) { errno = ENOMEM; return nullptr; }
+    v->primary = base; v->bytes = bytes;
+    virtmemLock();
+    v->writable = reinterpret_cast<uintptr_t>(virtmemFindCodeMemory(bytes, Page));
+    if (v->writable) v->reservation = virtmemAddReservation(reinterpret_cast<void*>(v->writable), bytes);
+    virtmemUnlock();
+    if (!v->reservation) { free(v); errno = ENOMEM; return nullptr; }
+    Result rc = svcMapProcessMemory(reinterpret_cast<void*>(v->writable), envGetOwnProcessHandle(), base, bytes);
+    if (R_FAILED(rc)) {
+        virtmemLock(); virtmemRemoveReservation(v->reservation); virtmemUnlock();
+        free(v); errno = ENOMEM; return nullptr;
+    }
+    for (size_t i = first; i < first + bytes / Page; ++i) ++r->entries[i].writers;
+    v->result = reinterpret_cast<void*>(v->writable + (value - base));
+    v->next = views; views = v;
+    return v->result;
+}
+void NativeReleaseWritableView(void* address) {
+    if (!address) return;
+    Lock lock;
+    View** link = &views;
+    while (*link && (*link)->result != address) link = &(*link)->next;
+    if (!*link) abort();
+    View* v = *link;
+    // Publish through the writable alias before retiring it. The executable
+    // virtual address never changed and remains usable by other threads.
+    armDCacheFlush(reinterpret_cast<void*>(v->writable), v->bytes);
+    armICacheInvalidate(reinterpret_cast<void*>(v->primary), v->bytes);
+    Require(svcUnmapProcessMemory(reinterpret_cast<void*>(v->writable), envGetOwnProcessHandle(), v->primary, v->bytes));
+    Region* r = Find(v->primary, v->bytes);
+    if (!r) abort();
+    size_t first = (v->primary - r->base) / Page;
+    for (size_t i = first; i < first + v->bytes / Page; ++i) {
+        if (!r->entries[i].writers) abort();
+        --r->entries[i].writers;
+    }
+    virtmemLock(); virtmemRemoveReservation(v->reservation); virtmemUnlock();
+    *link = v->next; free(v);
 }
 int NativeDiscard(void*, size_t) {
     // POSIX_MADV_DONTNEED is advisory and must not discard private modifications.

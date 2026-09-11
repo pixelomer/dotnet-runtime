@@ -9,6 +9,9 @@ void* NativeMap(void* address, size_t size, int protection, int flags, int fd, o
 int NativeUnmap(void* address, size_t size);
 int NativeProtect(void* address, size_t size, int protection);
 int NativeDiscard(void* address, size_t size);
+// Temporary private-image writer aliases; primary protection remains unchanged.
+void* NativeAcquireWritableView(void* address, size_t size);
+void NativeReleaseWritableView(void* address);
 // Release any unrecorded image reservation (failed load/alignment padding).
 int NativeReleaseImageReservation(const void* address);
 #else

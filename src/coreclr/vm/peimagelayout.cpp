@@ -208,6 +208,28 @@ DWORD SectionCharacteristicsToPageProtection(UINT characteristics)
 
 //To force base relocation on Vista (which uses ASLR), unmask IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
 //(0x40) for OptionalHeader.DllCharacteristics
+#ifdef TARGET_LIBNX
+// Scoped separately from executable-allocator blocks: these pages belong to
+// PAL's file loader, and must remain mapped if loading unwinds with an error.
+class PEImageWritableView
+{
+    BYTE* m_address = nullptr;
+public:
+    PEImageWritableView() = default;
+    PEImageWritableView(const PEImageWritableView&) = delete;
+    PEImageWritableView& operator=(const PEImageWritableView&) = delete;
+    ~PEImageWritableView() { PAL_LOADReleaseWritableView(m_address); }
+    void Reset(BYTE* address, SIZE_T size)
+    {
+        PAL_LOADReleaseWritableView(m_address);
+        m_address = nullptr;
+        m_address = static_cast<BYTE*>(PAL_LOADAcquireWritableView(address, size));
+        if (m_address == nullptr) ThrowLastError();
+    }
+    BYTE* Get() const { return m_address; }
+};
+#endif
+
 void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
 {
     STANDARD_VM_CONTRACT;
@@ -235,6 +257,9 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
     BYTE * pWriteableRegion = NULL;
     SIZE_T cbWriteableRegion = 0;
     DWORD dwOldProtection = 0;
+#ifdef TARGET_LIBNX
+    PEImageWritableView writableView;
+#endif
 
     BYTE * pFlushRegion = NULL;
     SIZE_T cbFlushRegion = 0;
@@ -264,6 +289,7 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
         // Check whether the page is outside the unprotected region
         if ((SIZE_T)(pageAddress - pWriteableRegion) >= cbWriteableRegion)
         {
+#ifndef TARGET_LIBNX
             // Restore the protection
             if (dwOldProtection != 0)
             {
@@ -282,6 +308,7 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
                 dwOldProtection = 0;
             }
 
+#endif
             USHORT fixup = VAL16(fixups[0]);
 
             IMAGE_SECTION_HEADER *pSection = RvaToSection(rva + (fixup & 0xfff));
@@ -290,6 +317,12 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
             pWriteableRegion = (BYTE*)GetRvaData(VAL32(pSection->VirtualAddress));
             cbWriteableRegion = VAL32(pSection->SizeOfRawData);
 
+#ifdef TARGET_LIBNX
+            // Keep the primary permissions unchanged. The existing relocation
+            // decoder writes through a temporary view of these same pages.
+            writableView.Reset(pWriteableRegion, cbWriteableRegion);
+            dwOldProtection = SectionCharacteristicsToPageProtection(pSection->Characteristics);
+#else
             // Unprotect the section if it is not writable
             if (((pSection->Characteristics & VAL32(IMAGE_SCN_MEM_WRITE)) == 0))
             {
@@ -316,6 +349,7 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
                 dwOldProtection = SectionCharacteristicsToPageProtection(pSection->Characteristics);
 #endif // TARGET_UNIX
             }
+#endif
         }
 
         BYTE* pEndAddressToFlush = NULL;
@@ -324,17 +358,21 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
             USHORT fixup = VAL16(fixups[fixupIndex]);
 
             BYTE * address = pageAddress + (fixup & 0xfff);
-
+#ifdef TARGET_LIBNX
+            BYTE* writeAddress = writableView.Get() + (address - pWriteableRegion);
+#else
+            BYTE* writeAddress = address;
+#endif
             switch (fixup>>12)
             {
             case IMAGE_REL_BASED_PTR:
-                *(TADDR *)address += delta;
+                *(TADDR *)writeAddress += delta;
                 pEndAddressToFlush = max(pEndAddressToFlush, address + sizeof(TADDR));
                 break;
 
 #ifdef TARGET_ARM
             case IMAGE_REL_BASED_THUMB_MOV32:
-                PutThumb2Mov32((UINT16 *)address, GetThumb2Mov32((UINT16 *)address) + (INT32)delta);
+                PutThumb2Mov32((UINT16 *)writeAddress, GetThumb2Mov32((UINT16 *)address) + (INT32)delta);
                 pEndAddressToFlush = max(pEndAddressToFlush, address + 8);
                 break;
 #endif
@@ -370,6 +408,7 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
     }
     _ASSERTE(dirSize == dirPos);
 
+#ifndef TARGET_LIBNX
     if (dwOldProtection != 0)
     {
 #if defined(__APPLE__) && defined(HOST_ARM64)
@@ -386,6 +425,7 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
             ThrowLastError();
 #endif // __APPLE__ && HOST_ARM64
     }
+#endif
 #ifdef TARGET_UNIX
     PAL_LOADMarkSectionAsNotNeeded((void*)dir);
 #endif // TARGET_UNIX

@@ -46,7 +46,7 @@ for unit in [source / 'main.cpp', repo / 'src/coreclr/pal/src/map/libnx/virtual.
 target = output / 'coreclr-filemap-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
                 '-specs=' + str(libnx_root / 'switch.specs'), '-g', '-Wl,--gc-sections',
-                '-Wl,-Map,' + str(target.with_suffix('.map')), *objects,
+                '-Wl,-Map,' + str(target.with_suffix('.map')), '-Wl,--wrap=svcSetProcessMemoryPermission', '-Wl,--wrap=svcMapProcessMemory', *objects,
                 '-L' + str(libnx_root / 'lib'), '-lnx', '-o', str(target.with_suffix('.elf'))], check=True)
 subprocess.run([str(devkitpro / 'tools/bin/nacptool'), '--create', 'CoreCLR file mapping',
                 'Runtime research', '1.0.0', str(target.with_suffix('.nacp'))], check=True)

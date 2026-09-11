@@ -262,7 +262,9 @@ elseif(LIBNX)
     add_definitions(-DSWITCH -D__SWITCH__)
     add_compile_options(-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE)
     add_compile_options(-g -Wall -O2 -ffunction-sections)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti -fno-exceptions")
+    # Do not disable C++ EH for the whole platform: CoreCLR uses it for
+    # native exception cleanup. NativeAOT disables it in its own CMake scope.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
     # set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -g ${ARCH}" CACHE STRING "ASM flags")
 
     set(CMAKE_SYSTEM_PREFIX_PATH "${CROSS_ROOTFS}/devkitA64/")

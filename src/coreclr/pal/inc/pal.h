@@ -2656,6 +2656,14 @@ BOOL
 PALAPI
 PAL_LOADMarkSectionAsNotNeeded(void * ptr);
 
+#ifdef TARGET_LIBNX
+// Horizon cannot restore execute permission after making a code page writable.
+// These private-image views preserve the primary mapping and are released on
+// normal completion or exception unwind. Release also publishes code caches.
+PALIMPORT PVOID PALAPI PAL_LOADAcquireWritableView(PVOID address, SIZE_T size);
+PALIMPORT void PALAPI PAL_LOADReleaseWritableView(PVOID address);
+#endif
+
 PALIMPORT
 FARPROC
 PALAPI
