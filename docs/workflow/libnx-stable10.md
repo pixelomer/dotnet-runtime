@@ -32,3 +32,10 @@ also requires a PAL, executable allocation, loading, exceptions and suspension
 appropriate to Horizon. libnx JIT buffers expose separate writable and executable
 addresses, requiring explicit relocation, cache synchronization and lifetime
 handling. Building NativeAOT does not supply those CoreCLR interfaces.
+
+## Affinity storage and thread identifiers
+
+.NET 10's AffinitySet owns dynamic storage. Initialize it for all 64 possible
+kernel core-mask bits before adding CPU indices. Minipal retrieves the kernel
+thread ID with `svcGetThreadId`, matching the runtime thread registry rather
+than using a borrowed handle as an identity.
