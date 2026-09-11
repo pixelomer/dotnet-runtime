@@ -44,3 +44,23 @@ process exit. Linking ICU archives alone does not provide the data.
 Even formatting an endpoint in a socket exception can initialize CultureInfo.
 See the [networking probe](tests/networking/README.md) for initialization and
 source socket assembly instructions.
+
+## Isolated socket-library reference recipe
+
+After building the native runtime/BCL and managed SDK assemblies above,
+run from the runtime root:
+
+```sh
+python3 src/coreclr/nativeaot/Runtime/libnx/build-sockets.py \
+  --output "$PWD/artifacts/sockets-reference-build"
+```
+
+Choose a new output directory. The script rebuilds the reference projects
+named by the Release socket project and their source dependencies into an
+isolated pack, then rebuilds the Horizon socket library. It checks that
+compilation resolves exactly the expected references from that pack.
+
+The recipe uses the normal repository SDK bootstrap and NuGet dependencies;
+it does not require the broad `libs.ref` build or build all framework libraries.
+ILC must still select the resulting socket assembly explicitly, as shown in
+the networking probe's build script.

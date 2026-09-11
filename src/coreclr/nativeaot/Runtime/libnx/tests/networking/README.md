@@ -9,34 +9,18 @@ The official Unix assembly requires event ports unavailable on Horizon.
 
 ## Build the socket assembly
 
-From the runtime root, build the required reference projects and socket library.
-The following builds an isolated reference pack from source:
+From the runtime root, use the [targeted source recipe](../../build-sockets.py)
+after satisfying the managed SDK prerequisites:
 
-```bash
-(
-set -e
-socket_ref_pack="$PWD/artifacts/horizon-socket-refpack"
-mkdir -p "$socket_ref_pack/ref/net9.0"
-socket_build_options=(
-  -c Release -p:TargetOS=libnx -p:TargetArchitecture=arm64
-  -p:RuntimeFlavor=CoreCLR -p:UseNativeAotCoreLib=true -p:PublicSign=true
-  -p:NativeAotSupported=true -p:EnableTrimAnalyzer=false
-  "-p:MicrosoftNetCoreAppRefPackDir=$socket_ref_pack/"
-  "-p:MicrosoftNetCoreAppRefPackRefDir=$socket_ref_pack/ref/net9.0/"
-)
-for socket_reference in Microsoft.Win32.Primitives System.Collections \
-  System.Collections.Concurrent System.Diagnostics.DiagnosticSource \
-  System.Diagnostics.Tracing System.Memory System.Net.NameResolution \
-  System.Net.Primitives System.Runtime System.Runtime.InteropServices \
-  System.Threading System.Threading.Overlapped System.Threading.ThreadPool \
-  System.Threading.Thread; do
-  ./dotnet.sh build "src/libraries/$socket_reference/ref/$socket_reference.csproj" \
-    "${socket_build_options[@]}" -t:Rebuild
-done
-./dotnet.sh build src/libraries/System.Net.Sockets/src/System.Net.Sockets.csproj \
-  "${socket_build_options[@]}" -p:TargetFramework=net9.0-libnx -t:Rebuild
-)
+```sh
+python3 src/coreclr/nativeaot/Runtime/libnx/build-sockets.py \
+  --output "$PWD/artifacts/sockets-reference-build"
 ```
+
+The output directory must be new. The script builds the socket project's
+reference dependencies into an isolated pack, rebuilds System.Net.Sockets
+and checks exclusive resolution from that pack. It does not require a broad
+`libs.ref` build.
 
 The output is
 `artifacts/bin/System.Net.Sockets/Release/net9.0-libnx/System.Net.Sockets.dll`.
