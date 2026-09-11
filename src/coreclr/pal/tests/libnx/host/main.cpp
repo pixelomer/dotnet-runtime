@@ -163,6 +163,10 @@ int main(int argc, char** argv)
     setenv("DOTNET_JitDisasm", "Soak:HotLoop", 1);
 #endif
 #endif
+#ifdef HOST_R2R_PROBE
+    // Request native R2R use; the Horizon VM must still enforce its IL/JIT ABI.
+    setenv("DOTNET_ReadyToRun", "1", 1);
+#endif
     coreclr_set_error_writer(error_writer);
     void* host = nullptr;
     unsigned domain = 0;

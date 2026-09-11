@@ -3,8 +3,8 @@
 
 Follow src/coreclr/pal/tests/libnx/threads/README.md for devkitPro/ICU,
 pinned libnx SDK staging and CoreCLR cross-configuration. Export
-ICU_NX_INSTALL_DIR to the source-built ICU installation. Install dnfile and
-pyelftools in the Python environment running this helper; see the sibling
+ICU_NX_INSTALL_DIR to the source-built ICU installation. Install dnfile,
+pyelftools and pefile in the Python environment running this helper; see the sibling
 README.md for setup. From the runtime root:
 
     ./build.sh clr.corelib -os libnx -arch arm64 -c Release /p:PublicSign=true
@@ -39,11 +39,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
 parser.add_argument('--output', type=Path, help='Keep a probe variant in a separate artifact directory')
 parser.add_argument('--jit-trace', action='store_true')
+parser.add_argument('--r2r-input', type=Path, help='Owned ReadyToRun control DLL for the r2r probe')
 parser.add_argument('--framework', type=Path, help='Override compatible source-built framework assemblies')
 parser.add_argument('--corelib', type=Path, help='Override CoreLib for explicit compatibility controls')
 parser.add_argument('--minopts', action='store_true', help='Exercise minimum-optimization JIT code generation')
-parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows', 'soak'], default='basic')
+parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'], default='basic')
 args = parser.parse_args()
+if args.probe == 'r2r' and (args.r2r_input is None or not args.r2r_input.is_file()):
+    parser.error('--r2r-input is required for the r2r probe')
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
 if not flags_file.is_file():
@@ -66,12 +69,14 @@ if args.jit_trace:
     compile_flags += ["-DHOST_JIT_TRACE"]
 if args.probe in ('suspension', 'suspension-flows', 'soak'):
     compile_flags += ['-DHOST_SUSPENSION_PROBE']
-if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'):
     compile_flags += ['-DHOST_BCL_PROBE']
 if args.probe == 'sockets':
     compile_flags += ['-DHOST_SOCKET_PROBE']
 if args.probe == 'soak':
     compile_flags += ['-DHOST_SOAK_PROBE']
+if args.probe == 'r2r':
+    compile_flags += ['-DHOST_R2R_PROBE']
 if args.minopts:
     compile_flags += ['-DHOST_MINOPTS']
 objects = []
@@ -124,7 +129,7 @@ if managed.exists():
     shutil.rmtree(managed)
 managed.mkdir()
 references = []
-if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'):
     framework = args.framework or repo / 'artifacts/bin/runtime/net10.0-libnx-Release-arm64'
     if not (framework / 'System.Runtime.dll').is_file():
         parser.error('Build libs.sfx for CoreCLR/libnx before the BCL probe')
@@ -133,15 +138,22 @@ if args.probe in ('bcl', 'sockets', 'suspension-flows', 'soak'):
             continue
         shutil.copyfile(assembly, managed / assembly.name)
         references.append('-r:' + str(assembly))
+if args.probe == 'r2r':
+    shutil.copyfile(args.r2r_input, managed/'OwnedReadyToRun.dll')
 shutil.copyfile(corelib, managed / corelib.name)
 sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
 subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
                 '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
                 '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
-                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs'}[args.probe])], check=True)
+                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe])], check=True)
 with (output/'qcall-validation.json').open('w') as result:
     subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
                     str(target.with_suffix('.elf'))], stdout=result, check=True)
+
+# The r2r probe is an explicit unsupported-format control, not a deployment.
+validator = source/'validate-il.py'
+subprocess.run(['python3', str(validator), *[str(p) for p in sorted(managed.glob('*.dll'))
+    if not (args.probe == 'r2r' and p.name == 'OwnedReadyToRun.dll')]], check=True)
 
 def digest(path):
     with path.open('rb') as stream:
@@ -153,17 +165,17 @@ for line in target.with_suffix('.map').read_text().splitlines():
         path = Path(line[5:].strip())
         if path.is_file():
             linked_inputs[str(path.resolve())] = digest(path)
-managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs'}[args.probe]
+managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe]
 snapshot = output/'source-snapshot'
 if snapshot.exists():
     shutil.rmtree(snapshot)
 snapshot.mkdir()
-for path in [Path(__file__), *units, managed_source]:
+for path in [Path(__file__), validator, *units, managed_source]:
     shutil.copyfile(path, snapshot/path.name)
 manifest = {
     'source_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
     'probe': args.probe, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
-    'source_sha256': {str(path.relative_to(repo)): digest(path) for path in [Path(__file__), *units, managed_source]},
+    'source_sha256': {str(path.relative_to(repo)): digest(path) for path in [Path(__file__), validator, *units, managed_source]},
     'corelib_input': str(corelib),
     'managed_sha256': {path.name: digest(path) for path in sorted(managed.glob('*.dll'))},
     'linked_input_sha256': linked_inputs,

@@ -5,14 +5,14 @@ the production VM, RyuJIT, GC and PAL. Follow the
 [thread probe](../threads/README.md) for devkitPro/ICU prerequisites, the pinned
 libnx source, SDK staging and CoreCLR cross-configuration.
 Export `ICU_NX_INSTALL_DIR` to the source-built ICU installation. The host's QCall checker
-requires dnfile and pyelftools. Use Python 3.11 or newer and install them into
+requires dnfile and pyelftools; the IL-format checker requires pefile. Use Python 3.11 or newer and install them into
 a local Python environment
 before invoking the helper. From the runtime root:
 
 ```sh
 python3 -m venv artifacts/qcall-python
 . artifacts/qcall-python/bin/activate
-python3 -m pip install dnfile pyelftools
+python3 -m pip install dnfile pyelftools pefile
 ./build.sh clr.corelib -os libnx -arch arm64 -c Release /p:PublicSign=true
 cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
   --target coreclr_static -- -j6
@@ -209,3 +209,54 @@ existing file before running, along with the ordinary host and disassembly
 logs described above. Managed live-memory, native allocation and Horizon
 process-used counters have different scopes; none alone proves an absence of
 leaks or represents an isolated GC pause.
+
+## IL deployment format and ReadyToRun controls
+
+The host builder runs [validate-il.py](validate-il.py) on the generated managed
+deployment. Install pefile in the same Python environment as the QCall tools.
+The checker reads PE/CLI headers without loading assemblies. It requires a
+managed IL-only input with no native header, no 32-bit-only requirement or
+native entry point, and an AnyCPU or ARM64 PE format. It rejects ReadyToRun and
+foreign CPU formats. This format check is not a security validator and does
+not establish framework or API compatibility.
+
+Normal application assemblies must be built with `PublishReadyToRun=false`.
+The Horizon VM forces native ReadyToRun execution off even if
+`DOTNET_ReadyToRun=1`; that does not make a foreign ReadyToRun PE image a
+supported IL-only deployment. Loader identity, mapping and protection checks
+still apply.
+
+For an explicit unsupported-format control, the source fixture in
+[r2r-control](r2r-control/OwnedReadyToRun.cs) supplies its own checked arithmetic
+method. Install Microsoft .NET SDK 10.0.111 for this standalone helper, which
+downloads Linux ARM64 ReadyToRun tooling/framework 10.0.12 through restore.
+From the runtime root:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/host/r2r-control/build.py
+python3 src/coreclr/pal/tests/libnx/host/build.py \
+  --probe r2r \
+  --r2r-input artifacts/libnx-r2r-control/publish/OwnedReadyToRun.dll \
+  --output artifacts/libnx-coreclr-r2r --jit-trace
+```
+
+The control builder requires dnfile and writes the default AnyCPU-source
+variant under `artifacts/libnx-r2r-control`. Add `--platform-specific` to
+retain RID-inferred identity; its output is under
+`artifacts/libnx-r2r-control-architecture`. Pass that variant's publish DLL
+as `--r2r-input` when selecting it. Each helper invocation replaces generated
+project/source-copy/publish/report files in its selected output; keep user
+inputs elsewhere.
+
+The host still needs the source-built CoreLib and libs.sfx framework described
+above. Only `OwnedReadyToRun.dll` is excluded from its IL-format check for the
+explicit r2r selection. It is copied into the generated managed directory;
+deploy that whole directory and preserve existing probe files as documented.
+Keep the control input outside the host's replaced managed/source-snapshot
+subdirectories.
+
+The workload attempts path-based loading, arithmetic/overflow and default-context
+identity checks. Managed result 100 means those checks completed; loader
+rejection or another exception returns 110 with diagnostic output. This control
+does not declare foreign ReadyToRun loading supported. Do not bypass the normal
+deployment format checker to use it for application inputs.
