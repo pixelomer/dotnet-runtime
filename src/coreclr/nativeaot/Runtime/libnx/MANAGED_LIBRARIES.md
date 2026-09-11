@@ -64,3 +64,24 @@ The recipe uses the normal repository SDK bootstrap and NuGet dependencies;
 it does not require the broad `libs.ref` build or build all framework libraries.
 ILC must still select the resulting socket assembly explicitly, as shown in
 the networking probe's build script.
+
+## Package the workstation SDK subset
+
+```sh
+python3 src/coreclr/nativeaot/Runtime/libnx/package-sdk.py /new/sdk-directory
+python3 /new/sdk-directory/src/coreclr/nativeaot/Runtime/libnx/validate-sdk.py /new/sdk-directory
+```
+
+The package preserves the runtime build-directory layout for existing consumers
+and carries a versioned manifest, per-file hashes, both runtime licenses, the
+linker generator, five SDK DLLs, Horizon socket DLL, workstation runtime and
+three native BCL libraries. It omits Git metadata, game inputs, FMOD, ICU and
+toolchains. ICU/zlib/devkitPro remain explicit external dependencies.
+The validator checks target/version/GC/TLS contracts and hashes; it identifies
+the packaging source revision separately from actual binary input hashes.
+
+This is a workstation runtime subset, not a complete framework SDK.
+Use a new output directory; the packager rejects existing paths. Build the
+native runtime/BCL, managed SDK and source socket library before packaging.
+Source-build guides remain in the runtime checkout; the generated package
+README describes the binary layout, prerequisites and consumer contract.
