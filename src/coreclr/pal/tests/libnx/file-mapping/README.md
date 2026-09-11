@@ -61,3 +61,20 @@ romfs, currently fail explicitly. No seek/restore workaround is used.
 The adapter/test code and libnx driver extension use official public Horizon
 filesystem operations. No proprietary SDK code.
 This is a native platform-boundary test, not managed assembly loading/startup.
+
+## Executable sections and writer ownership
+
+Execute capability is selected at NativeMap. Executable views can switch
+R/RX/None but use a separate writer for writes; changing them to writable
+AliasCodeData would irreversibly remove code-state capability. Data views can
+switch R/RW/None and cannot acquire execute capability. These capabilities
+remain stable after failed multi-page protection changes. PAL VirtualProtect
+does not bypass rejections for backend-owned mappings.
+
+PAL_LOADAcquireWritableView and PAL_LOADReleaseWritableView own temporary
+MapProcessMemory aliases. They pin the original backing, map each homogeneous
+section run, roll back failed acquisitions, and publish caches before unmapping.
+The PE relocation decoder writes through a scoped PAL view whose destructor also
+releases it during C++ exception cleanup. CoreCLR retains C++ EH; NativeAOT
+disables it within its own CMake scope. The native probe covers these mapping
+contracts, not a full managed image load.

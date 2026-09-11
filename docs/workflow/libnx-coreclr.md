@@ -119,3 +119,13 @@ The file-mapping and virtual-memory probes read this SDK path from CMakeCache.
 The PAL pread bridge calls the driver's `fsdevPread` without changing a shared
 descriptor's position or depending on private driver layouts. This bridge
 supports fsdev descriptors; it does not implement other devoptab drivers.
+
+Executable capability is fixed at mapping time. Scoped PAL writer aliases let
+the PE relocation decoder update executable images while their primary mapping
+remains RX. Writer acquisitions pin backing, split heterogeneous sections into
+separate runs, roll back failed mappings and publish caches on release.
+
+CoreCLR uses C++ exception cleanup for these views. The toolchain does not
+disable C++ EH for the entire platform; NativeAOT controls it in its own scope.
+The native file-mapping probe exercises these boundaries, not a complete
+managed image load.
