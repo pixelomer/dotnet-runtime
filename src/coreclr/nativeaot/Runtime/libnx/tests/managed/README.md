@@ -17,13 +17,16 @@ installation prefix, set `DEVKITA64=$DEVKITPRO/devkitA64`, and add
 source build uses its own pinned SDK through `build.sh`. Restore downloads the
 pinned ILC and managed runtime 9.0.3 packages from NuGet.
 
-Build both native subsets from the runtime root first:
+Build the native subsets and matching managed SDK libraries from the runtime root:
 
 ```sh
 ROOTFS_DIR="$DEVKITPRO" ./build.sh \
   -s clr.nativeaotruntime+libs.native -c Release --cross -a arm64 --os libnx \
   /p:NativeAotSupported=true /p:EnableTrimAnalyzer=false \
   -cmakeargs '-DFEATURE_EVENT_TRACE=OFF'
+ROOTFS_DIR="$DEVKITPRO" ./build.sh -s clr.nativeaotlibs -c Release \
+  --cross -a arm64 --os libnx /p:NativeAotSupported=true \
+  /p:EnableTrimAnalyzer=false /p:PublicSign=true
 python3 src/coreclr/nativeaot/Runtime/libnx/tests/managed/build.py
 ```
 
@@ -61,3 +64,7 @@ Primary platform references:
 [virtual-region selection](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/kernel/virtmem.c),
 [pthread join/unsupported detach](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/newlib.c),
 [application exit mode](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/applet.c).
+
+The probe requires the five source-built Horizon aotsdk DLLs and passes their
+directory to ILC with `IlcSdkPath`; see the [managed library guide](../../MANAGED_LIBRARIES.md).
+The shared allocator accounts for both BCL frozen objects and GC mappings.

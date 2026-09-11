@@ -14,6 +14,8 @@ dkp=Path(os.environ.get('DEVKITPRO','/opt/devkitpro'))
 icu=Path(os.environ['ICU_NX_INSTALL_DIR'])
 sdk=repo/'artifacts/bin/coreclr/libnx.arm64.Release/aotsdk'
 libs=repo/'artifacts/bin/native/net9.0-libnx-Release-arm64'
+if not (sdk/'System.Private.CoreLib.dll').is_file():
+    raise SystemExit('Build clr.nativeaotlibs for Horizon first; see MANAGED_LIBRARIES.md')
 (out/'Stress.csproj').write_text('''<Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup>
 <TargetFramework>net9.0</TargetFramework><OutputType>Library</OutputType>
@@ -24,7 +26,7 @@ libs=repo/'artifacts/bin/native/net9.0-libnx-Release-arm64'
 </Project>''')
 shutil.copy2(here/'Stress.cs',out/'Stress.cs')
 with (out/'publish.log').open('w') as log:
-    subprocess.run(['dotnet','publish',str(out/'Stress.csproj'),'-c','Release','-r','linux-arm64','--self-contained'],cwd=out,stdout=log,stderr=subprocess.STDOUT,check=True)
+    subprocess.run(['dotnet','publish',str(out/'Stress.csproj'),'-c','Release','-r','linux-arm64','--self-contained','-p:IlcSdkPath='+str(sdk)+'/'],cwd=out,stdout=log,stderr=subprocess.STDOUT,check=True)
 if re.search(r'warning IL\d+', (out/'publish.log').read_text()):raise SystemExit('AOT warnings remain')
 obj=out/'obj/Release/net9.0/linux-arm64/native/Stress.o'
 asm=subprocess.check_output(['aarch64-none-elf-objdump','-dr',str(obj)],text=True)
@@ -40,7 +42,7 @@ cmd=[str(dkp/'devkitA64/bin/aarch64-none-elf-g++'),*flags,str(here/'main.cpp'),s
 (out/'link-command.json').write_text(json.dumps(cmd,indent=2)+'\n')
 with (out/'link.log').open('w') as log:subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,check=True)
 subprocess.run([str(dkp/'tools/bin/elf2nro'),str(out/'nativeaot-managed-stress.elf'),str(out/'nativeaot-managed-stress.nro')],check=True)
-inputs=[obj,sdk/'libRuntime.WorkstationGC.a',sdk/'libbootstrapperdll.o',
+inputs=[*sorted(sdk.glob('*.dll')),obj,sdk/'libRuntime.WorkstationGC.a',sdk/'libbootstrapperdll.o',
         sdk/'libeventpipe-disabled.a',sdk/'libstandalonegc-disabled.a',
         *sorted(libs.glob('*.a')),out/'nativeaot-managed-stress.nro',out/'switch.ld',out/'switch.specs']
 manifest={
