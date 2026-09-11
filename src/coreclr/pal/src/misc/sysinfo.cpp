@@ -31,8 +31,10 @@ Revision History:
 #include <sys/types.h>
 
 #if defined(TARGET_LIBNX)
+extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/result.h>
+}
 #elif HAVE_SYSCONF
 // <unistd.h> already included above
 #elif HAVE_SYSCTL
@@ -247,7 +249,11 @@ GetSystemInfo(
     PERF_ENTRY(GetSystemInfo);
     ENTRY("GetSystemInfo (lpSystemInfo=%p)\n", lpSystemInfo);
 
+#if defined(TARGET_LIBNX)
+    pagesize = 4096;
+#else
     pagesize = getpagesize();
+#endif
 
     lpSystemInfo->wProcessorArchitecture_PAL_Undefined = 0;
     lpSystemInfo->wReserved_PAL_Undefined = 0;

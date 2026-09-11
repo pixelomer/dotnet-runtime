@@ -57,3 +57,18 @@ API rather than supplying fabricated limits.
 Default-stack configuration uses the existing 64 KiB thread-creation fallback
 when newlib omits `PTHREAD_STACK_MIN`. File-descriptor limit adjustment is
 disabled because Horizon/newlib does not provide the POSIX resource-limit API.
+
+## Data virtual memory
+
+The PAL data allocator uses `map/libnx/virtual.cpp` with the shared
+`src/native/libs/Common/nxvm.c` pool. It owns reservation metadata and implements
+reserve, commit, decommit and release. Queries intersect kernel regions with PAL
+allocation boundaries. Fixed placement and unsupported Stack-alias protection
+changes fail explicitly; executable allocation is a separate backend.
+
+Decommit recycles backing into the bounded shared pool rather than returning
+the entire pool to Horizon. Uncommitted reservations made directly by other nxvm
+consumers are outside this PAL's reservation table. The
+[virtual-memory probe](../../src/coreclr/pal/tests/libnx/virtual-memory/README.md)
+exercises shared ownership, quota rollback, zero-filled reuse and query bounds.
+System information uses Horizon's 4096-byte pages and C linkage for libnx APIs.
