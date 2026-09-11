@@ -27,6 +27,10 @@
 #include "stressLog.h"
 #include "RhConfig.h"
 #include "GcEnum.h"
+#ifdef TARGET_LIBNX
+#include "libnx/LibnxThreads.h"
+#include "unix/UnixContext.h"
+#endif
 
 #ifndef DACCESS_COMPILE
 
@@ -284,6 +288,15 @@ void Thread::Construct()
                        FALSE,  // inherit
                        DUPLICATE_SAME_ACCESS);
 
+#ifdef TARGET_LIBNX
+    // A missing registration would omit this thread from global ordering and
+    // make call-free managed loops impossible to suspend safely.
+    if (m_hPalThread == nullptr || m_hPalThread == INVALID_HANDLE_VALUE) RhFailFast();
+    m_libnxPauseContext = new (nothrow) NATIVE_CONTEXT{};
+    if (m_libnxPauseContext == nullptr) RhFailFast();
+    m_libnxPaused = false;
+#endif
+
     if (!PalGetMaximumStackBounds(&m_pStackLow, &m_pStackHigh))
         RhFailFast();
 
@@ -360,6 +373,12 @@ void Thread::Detach()
 void Thread::Destroy()
 {
     ASSERT(IsDetached());
+
+#ifdef TARGET_LIBNX
+    if (m_libnxPaused) RhFailFast();
+    delete m_libnxPauseContext;
+    m_libnxPauseContext = nullptr;
+#endif
 
     if (m_hPalThread != INVALID_HANDLE_VALUE)
         PalCloseHandle(m_hPalThread);
@@ -614,8 +633,54 @@ void Thread::Hijack()
 
     // PalHijack will call HijackCallback or make the target thread call it.
     // It may also do nothing if the target thread is in inconvenient state.
+#ifdef TARGET_LIBNX
+    TrySuspendForGcOnLibnx();
+#else
     PalHijack(m_hPalThread, this);
+#endif
 }
+
+#ifdef TARGET_LIBNX
+void Thread::TrySuspendForGcOnLibnx()
+{
+    if (m_libnxPaused) return;
+    if (!LibnxPausePalThread(m_hPalThread, &m_libnxPauseContext->ctx)) RhFailFast();
+
+    // No allocation or blocking runtime locks while inspecting a stopped
+    // thread. A kernel context captured in native/SVC code is not a managed
+    // safe point; resume it so it can finish that region and retry later.
+    void* ip = reinterpret_cast<void*>(m_libnxPauseContext->GetIp());
+    RuntimeInstance* runtime = GetRuntimeInstance();
+    if (VolatileLoadWithoutBarrier(&m_pTransitionFrame) == nullptr &&
+        !IsDoNotTriggerGcSet() && runtime->IsManaged(ip))
+    {
+        ICodeManager* manager = runtime->GetCodeManagerForAddress(ip);
+        if (manager->IsSafePoint(ip) && manager->IsUnwindable(ip))
+        {
+            m_libnxPaused = true;
+            m_interruptedContext = m_libnxPauseContext;
+            m_pCachedTransitionFrame = INTERRUPTED_THREAD_MARKER;
+            return;
+        }
+    }
+    if (!LibnxResumePalThread(m_hPalThread)) RhFailFast();
+}
+
+bool Thread::IsLibnxCopiedRegisterSlot(const void* slot) const
+{
+    uintptr_t address = reinterpret_cast<uintptr_t>(slot);
+    uintptr_t first = reinterpret_cast<uintptr_t>(m_libnxPauseContext);
+    return m_libnxPaused && address >= first && address - first < sizeof(NATIVE_CONTEXT);
+}
+
+void Thread::ResumeAfterGcOnLibnx()
+{
+    if (!m_libnxPaused) return;
+    m_interruptedContext = nullptr;
+    m_libnxPaused = false;
+    if (!LibnxResumePalThread(m_hPalThread)) RhFailFast();
+}
+#endif
 
 void Thread::HijackCallback(NATIVE_CONTEXT* pThreadContext, void* pThreadToHijack)
 {

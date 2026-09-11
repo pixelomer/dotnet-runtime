@@ -158,7 +158,7 @@ else()
   if(CLR_CMAKE_TARGET_LIBNX)
     list(APPEND FULL_RUNTIME_SOURCES libnx/LibnxContext.cpp)
     list(APPEND COMMON_RUNTIME_SOURCES
-      libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c libnx/GCToOS.cpp libnx/nxvm.c)
+      libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c libnx/LibnxThreads.c libnx/GCToOS.cpp libnx/nxvm.c)
     # Horizon uses its own exception and suspension adapters instead of Linux
     # cgroups, NUMA, signal handlers and the subprocess crash dumper.
   else()

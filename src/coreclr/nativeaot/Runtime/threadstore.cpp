@@ -86,7 +86,7 @@ ThreadStore * ThreadStore::Create(RuntimeInstance * pRuntimeInstance)
     if (NULL == pNewThreadStore)
         return NULL;
 
-#ifdef FEATURE_HIJACK
+#if defined(FEATURE_HIJACK) && !defined(TARGET_LIBNX)
     if (!PalRegisterHijackCallback(Thread::HijackCallback))
         return NULL;
 #endif
@@ -342,6 +342,15 @@ void ThreadStore::ResumeAllThreads(bool waitForGCEvent)
     {
         GCHeapUtilities::GetGCHeap()->SetWaitForGCEvent();
     }
+#ifdef TARGET_LIBNX
+    // Keep OS-paused threads stopped through root relocation, cached-frame
+    // reset, global ordering, trap clearing and publication of the GC event.
+    FOREACH_THREAD(pTargetThread)
+    {
+        pTargetThread->ResumeAfterGcOnLibnx();
+    }
+    END_FOREACH_THREAD
+#endif
 } // ResumeAllThreads
 
 void ThreadStore::InitiateThreadAbort(Thread* targetThread, Object * threadAbortException, bool doRudeAbort)

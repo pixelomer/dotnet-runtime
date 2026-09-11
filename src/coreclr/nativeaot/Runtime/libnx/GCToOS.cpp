@@ -16,8 +16,8 @@ extern "C" {
 uint32_t g_pageSizeUnixInl = 4096;
 static AffinitySet s_affinity;
 static uint32_t s_cpuCount;
-// Deliberately unresolved until a real all-thread ordering protocol is supplied.
-// A local DMB, permission-change TLBI, or success stub does not meet this contract.
+// Kernel-backed rendezvous of registered runtime threads, including GC workers.
+// See THREAD_ORDERING.md; this is not a local DMB or permission-change TLBI.
 extern "C" void LibnxFlushProcessWriteBuffers();
 
 static void CheckResult(Result rc) { if (R_FAILED(rc)) abort(); }

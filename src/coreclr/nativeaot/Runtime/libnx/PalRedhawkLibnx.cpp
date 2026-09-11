@@ -55,6 +55,7 @@
 #endif
 
 #include "LibnxPlatform.h"
+#include "LibnxThreads.h"
 extern "C" {
 #include "nxvm.h"
 }
@@ -328,7 +329,28 @@ public:
 // This wrapper borrows libnx's actual handle. The owning pthread must remain
 // alive until RuntimeThreadShutdown detaches it; closing this wrapper must not
 // close the libnx-owned kernel handle.
-typedef UnixHandle<UnixHandleType::Thread, uint32_t> ThreadUnixHandle;
+class ThreadUnixHandle : public UnixHandleBase
+{
+    LibnxThreadRegistration* registration;
+public:
+    ThreadUnixHandle(LibnxThreadRegistration* value)
+        : UnixHandleBase(UnixHandleType::Thread), registration(value) {}
+    LibnxThreadRegistration* GetRegistration() { return registration; }
+    virtual bool Destroy() { return LibnxUnregisterThread(registration); }
+};
+
+extern "C" bool LibnxPausePalThread(void* handle, ThreadContext* context)
+{
+    auto thread = static_cast<ThreadUnixHandle*>(handle);
+    return thread && thread->GetType() == UnixHandleType::Thread &&
+        LibnxPauseRegisteredThread(thread->GetRegistration(), context);
+}
+extern "C" bool LibnxResumePalThread(void* handle)
+{
+    auto thread = static_cast<ThreadUnixHandle*>(handle);
+    return thread && thread->GetType() == UnixHandleType::Thread &&
+        LibnxResumeRegisteredThread(thread->GetRegistration());
+}
 
 void InitializeCurrentProcessCpuCount()
 {
@@ -697,9 +719,10 @@ extern "C" UInt32_BOOL DuplicateHandle(
     *lpTargetHandle = nullptr;
     if (hSourceProcessHandle != GetCurrentProcess() || hTargetProcessHandle != GetCurrentProcess() ||
         hSourceHandle != GetCurrentThread()) return UInt32_FALSE;
-    uint32_t borrowed = LibnxGetCurrentThreadHandle();
-    if (borrowed == 0) return UInt32_FALSE;
-    *lpTargetHandle = new (nothrow) ThreadUnixHandle(borrowed);
+    LibnxThreadRegistration* registration = LibnxRegisterCurrentThread();
+    if (!registration) return UInt32_FALSE;
+    *lpTargetHandle = new (nothrow) ThreadUnixHandle(registration);
+    if (*lpTargetHandle == nullptr && !LibnxUnregisterThread(registration)) RhFailFast();
     return *lpTargetHandle != nullptr;
 }
 
@@ -796,9 +819,8 @@ extern "C" uint16_t RtlCaptureStackBackTrace(uint32_t arg1, uint32_t arg2, void*
     return 0;
 }
 
-// PalRegisterHijackCallback and PalHijack are deliberately unresolved until
-// Horizon suspension and precise GC context handling are implemented. Do not
-// substitute pthread_kill, a no-op, or a success-returning callback registration.
+// Horizon Thread::Hijack uses synchronous suspension directly. There is no
+// signal-based callback registration or POSIX pthread_kill emulation.
 REDHAWK_PALIMPORT HijackFunc* REDHAWK_PALAPI PalGetHijackTarget(HijackFunc* defaultTarget)
 {
     return defaultTarget;

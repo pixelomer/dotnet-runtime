@@ -118,6 +118,10 @@ struct RuntimeThreadLocals
 #ifdef FEATURE_GC_STRESS
     uint32_t                m_uRand;                                // current per-thread random number
 #endif // FEATURE_GC_STRESS
+#ifdef TARGET_LIBNX
+    NATIVE_CONTEXT*         m_libnxPauseContext; // Allocated before joining ThreadStore.
+    bool                    m_libnxPaused;
+#endif
 };
 
 struct ReversePInvokeFrame
@@ -223,6 +227,11 @@ public:
 
 #ifdef FEATURE_HIJACK
     void                Hijack();
+#ifdef TARGET_LIBNX
+    void                TrySuspendForGcOnLibnx();
+    void                ResumeAfterGcOnLibnx();
+    bool                IsLibnxCopiedRegisterSlot(const void* slot) const;
+#endif
     void                Unhijack();
     bool                IsHijacked();
     void*               GetHijackedReturnAddress();

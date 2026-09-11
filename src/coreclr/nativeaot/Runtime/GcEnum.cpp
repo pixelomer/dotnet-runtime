@@ -67,6 +67,13 @@ void EnumGcRefsInRegionConservatively(PTR_OBJECTREF pLowerBound,
 
 static void GcEnumObject(PTR_PTR_Object ppObj, uint32_t flags, ScanFunc* fnGcEnumRef, ScanContext* pSc)
 {
+#ifdef TARGET_LIBNX
+    // Precise metadata identified this root, but its slot is in a snapshot of
+    // registers which Horizon cannot write back. Pin only such roots during
+    // this collection; real stack slots remain relocatable as usual.
+    if (pSc->thread_under_crawl && pSc->thread_under_crawl->IsLibnxCopiedRegisterSlot(ppObj))
+        flags |= GC_CALL_PINNED;
+#endif
     //
     // Sanity check that the flags contain only these values
     //
