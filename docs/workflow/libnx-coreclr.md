@@ -339,3 +339,23 @@ Probe.dll; copy the matching managed output when changing the selection.
 The optional --jit-trace uses the upstream buffered JitStdOutFile and replaces
 its designated disassembly file. Ordinary native operations and runtime
 algorithms remain unchanged by the host's tracing.
+
+## Horizon framework libraries
+
+Build the platform framework from the runtime root, using the devkitPro/ICU
+and staged-libnx prerequisites in the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md):
+
+```sh
+./build.sh libs.sfx -os libnx -arch arm64 -c Release \
+  /p:RuntimeFlavor=CoreCLR /p:PublicSign=true
+```
+
+The platform library output is `artifacts/bin/runtime/net10.0-libnx-Release-arm64`.
+Pair it with CoreCLR CoreLib built from the same checkout and feature settings.
+A Linux ReadyToRun runtime pack is not a substitute for these Horizon libraries.
+
+The shared socket adapter follows .NET 10's context-based unregister interface.
+It removes the exact SocketAsyncContext registration under the same lock used
+to add it, instead of relying on a closing descriptor's value. Its localized
+error describes the existing one-context-per-descriptor restriction. These
+managed adapter changes are shared by CoreCLR and NativeAOT.

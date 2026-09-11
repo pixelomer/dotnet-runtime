@@ -107,16 +107,15 @@ namespace System.Net.Sockets
 
         private bool TryRegisterCore(IntPtr socketHandle, SocketAsyncContext context, out Interop.Error error)
         {
-            bool added = _handleToContextMap.TryAdd(socketHandle, new SocketAsyncContextWrapper(context));
-            if (!added)
-            {
-                // Using public SafeSocketHandle(IntPtr) a user can add the same handle
-                // from a different Socket instance.
-                throw new InvalidOperationException(SR.net_sockets_handle_already_used);
-            }
-
             lock (_handleList)
             {
+                bool added = _handleToContextMap.TryAdd(socketHandle, new SocketAsyncContextWrapper(context));
+                if (!added)
+                {
+                    // This poll adapter supports one context per descriptor.
+                    // SafeSocketHandle(IntPtr) can otherwise register it twice.
+                    throw new InvalidOperationException(SR.net_sockets_libnx_handle_already_registered);
+                }
                 _handleList.Add(socketHandle);
                 unchecked
                 {
@@ -130,20 +129,30 @@ namespace System.Net.Sockets
             return true;
         }
 
-        public void UnregisterSocket(IntPtr socketHandle)
+        public static void UnregisterSocket(SocketAsyncContext context)
         {
-            _handleToContextMap.TryRemove(socketHandle, out _);
-
-            Log($"SocketAyncEngine: Removing socket {socketHandle}");
-
-            lock (_handleList)
+            // .NET 10 unregisters the context, after SafeHandle release begins.
+            // Find the registration by identity instead of relying on the
+            // closing handle's value or removing a later descriptor owner.
+            foreach (SocketAsyncEngine engine in s_engines)
             {
-                _handleList.Remove(socketHandle);
-                unchecked
+                lock (engine._handleList)
                 {
-                    ++_poolCookie;
+                    for (int i = 0; i < engine._handleList.Count; ++i)
+                    {
+                        IntPtr socketHandle = engine._handleList[i];
+                        if (engine._handleToContextMap.TryGetValue(socketHandle, out SocketAsyncContextWrapper registration) &&
+                            ReferenceEquals(registration.Context, context))
+                        {
+                            engine._handleToContextMap.TryRemove(socketHandle, out _);
+                            engine._handleList.RemoveAt(i);
+                            unchecked { ++engine._poolCookie; }
+                            return;
+                        }
+                    }
                 }
             }
+            Debug.Fail("Socket context was not registered with this engine.");
         }
 
         private SocketAsyncEngine()
