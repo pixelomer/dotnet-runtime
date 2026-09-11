@@ -154,3 +154,22 @@ The Horizon cross-configuration records procfs and file-backed mmap-pager
 features as unavailable, including their cached exit codes on reconfiguration.
 The native thread probe does not initialize managed CoreCLR or exercise a full
 PAL thread/GC-suspension lifecycle.
+
+## PAL exception integration
+
+Horizon user exceptions enter the existing CoreCLR SEHProcessException path,
+including heap record promotion and PAL virtual-unwind transitions. Ordinary
+dispatch runs below the interrupted SP so nested faults have independent frames.
+CoreCLR's ARM64 RestoreCompleteContext deliberate-fault mechanism uses Horizon
+ReturnFromException to restore the complete register set, including X16/X17.
+
+SEH-enabled PAL threads register in the common Horizon thread registry shared
+with NativeAOT. Process write-buffer flushing uses its synchronized kernel
+pause/resume protocol. Shared-memory objects retain PAL's object handling and
+use the native mapping adapter. Unsupported cross-process advisory locks,
+writable shared file mappings, subprocess crash dumps and activation requests
+fail explicitly.
+
+The [exception probe](../../src/coreclr/pal/tests/libnx/exceptions/README.md)
+exercises native read faults, nested dispatch and context restoration. It does
+not initialize managed CoreCLR or implement managed GC activation.
