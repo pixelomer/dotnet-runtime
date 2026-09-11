@@ -130,6 +130,8 @@ static void failureChecks() {
     check(memory != MapFailed, "reserve cross-section alias test");
     check(NativeMap(memory, 4096, MapRead | MapExecute, MapPrivate | MapFixed, fd, 0) == memory, "first independent section");
     check(NativeMap(memory + 4096, 4096, MapRead, MapPrivate | MapFixed, fd, 4096) == memory + 4096, "second independent section");
+    failMap = 2;
+    check(PAL_LOADAcquireWritableView(memory + 4090, 16) == nullptr, "second section writer failure rolls back first alias");
     writer = static_cast<unsigned char*>(PAL_LOADAcquireWritableView(memory + 4090, 16));
     check(writer && memcmp(writer, pattern + 4090, 16) == 0, "writer crosses independently backed sections");
     memset(writer, 0x5a, 16);

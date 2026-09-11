@@ -18,7 +18,8 @@ constexpr size_t Page = 4096;
 struct Backing { void* memory; size_t livePages; };
 struct Entry { Backing* backing; size_t offset; int protection; bool reserved, writableAllowed, dataState; size_t writers; };
 struct Region { Region* next; uintptr_t base; size_t pages; Entry* entries; VirtmemReservation* reservation; };
-struct View { View* next; uintptr_t primary, writable; size_t bytes; void* result; VirtmemReservation* reservation; };
+struct ViewSegment { ViewSegment* next; size_t offset, bytes; };
+struct View { View* next; ViewSegment* segments; uintptr_t primary, writable; size_t bytes; void* result; VirtmemReservation* reservation; };
 View* views;
 Mutex mutex;
 Region* regions;
@@ -246,8 +247,33 @@ void* NativeAcquireWritableView(void* address, size_t size) {
     if (v->writable) v->reservation = virtmemAddReservation(reinterpret_cast<void*>(v->writable), bytes);
     virtmemUnlock();
     if (!v->reservation) { free(v); errno = ENOMEM; return nullptr; }
-    Result rc = svcMapProcessMemory(reinterpret_cast<void*>(v->writable), envGetOwnProcessHandle(), base, bytes);
-    if (R_FAILED(rc)) {
+    // Map each source backing/protection run separately. Horizon requires a
+    // homogeneous source memory state; adjacent PE sections need not share it.
+    size_t mapped = 0;
+    while (mapped < bytes) {
+        size_t index = first + mapped / Page, count = 1;
+        const Entry& e = r->entries[index];
+        while (mapped + count * Page < bytes) {
+            const Entry& next = r->entries[index + count];
+            if (next.backing != e.backing || next.offset != e.offset + count * Page ||
+                next.protection != e.protection || next.dataState != e.dataState) break;
+            ++count;
+        }
+        ViewSegment* segment = static_cast<ViewSegment*>(calloc(1, sizeof(ViewSegment)));
+        if (!segment) break;
+        segment->offset = mapped; segment->bytes = count * Page;
+        Result rc = svcMapProcessMemory(reinterpret_cast<void*>(v->writable + mapped), envGetOwnProcessHandle(), base + mapped, segment->bytes);
+        if (R_FAILED(rc)) { free(segment); break; }
+        segment->next = v->segments; v->segments = segment;
+        mapped += segment->bytes;
+    }
+    if (mapped != bytes) {
+        while (v->segments) {
+            ViewSegment* segment = v->segments; v->segments = segment->next;
+            Require(svcUnmapProcessMemory(reinterpret_cast<void*>(v->writable + segment->offset),
+                envGetOwnProcessHandle(), base + segment->offset, segment->bytes));
+            free(segment);
+        }
         virtmemLock(); virtmemRemoveReservation(v->reservation); virtmemUnlock();
         free(v); errno = ENOMEM; return nullptr;
     }
@@ -267,7 +293,12 @@ void NativeReleaseWritableView(void* address) {
     // virtual address never changed and remains usable by other threads.
     armDCacheFlush(reinterpret_cast<void*>(v->writable), v->bytes);
     armICacheInvalidate(reinterpret_cast<void*>(v->primary), v->bytes);
-    Require(svcUnmapProcessMemory(reinterpret_cast<void*>(v->writable), envGetOwnProcessHandle(), v->primary, v->bytes));
+    while (v->segments) {
+        ViewSegment* segment = v->segments; v->segments = segment->next;
+        Require(svcUnmapProcessMemory(reinterpret_cast<void*>(v->writable + segment->offset),
+            envGetOwnProcessHandle(), v->primary + segment->offset, segment->bytes));
+        free(segment);
+    }
     Region* r = Find(v->primary, v->bytes);
     if (!r) abort();
     size_t first = (v->primary - r->base) / Page;
