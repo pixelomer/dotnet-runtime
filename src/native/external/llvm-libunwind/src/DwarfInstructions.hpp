@@ -95,6 +95,8 @@ typename A::pint_t DwarfInstructions<A, R>::getSavedRegister(
     A &addressSpace, const R &registers, pint_t cfa,
     const RegisterLocation &savedReg,
     typename A::pint_t& location) {
+  // Undefined and value-only rules have no writable saved-register home.
+  location = 0;
   switch (savedReg.location) {
   case CFI_Parser<A>::kRegisterInCFA:
     location = cfa + (pint_t)savedReg.value;

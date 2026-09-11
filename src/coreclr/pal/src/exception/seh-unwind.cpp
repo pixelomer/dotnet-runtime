@@ -21,10 +21,14 @@ Abstract:
 #ifdef HOST_UNIX
 #include "pal/context.h"
 #include "pal.h"
+#if defined(TARGET_LIBNX)
+#include "pal/libnx/unwind.h"
+#else
 #include <dlfcn.h>
 
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
+#endif
 #else // HOST_UNIX
 
 #include <windows.h>
@@ -44,6 +48,7 @@ Abstract:
 
 #endif // HOST_UNIX
 
+#if !defined(TARGET_LIBNX)
 #if defined(__APPLE__) && defined(HOST_ARM64) && !defined(HAVE_UNW_AARCH64_X19)
 // MacOS uses ARM64 instead of AARCH64 to describe these registers
 // Create aliases to reuse more code
@@ -640,6 +645,8 @@ void GetContextPointers(unw_cursor_t *cursor, unw_context_t *unwContext, KNONVOL
 #endif
 }
 
+#endif // !TARGET_LIBNX
+
 #ifndef HOST_WINDOWS
 
 // Frame pointer relative offset of a local containing a pointer to the windows style context of a location
@@ -651,9 +658,11 @@ int g_inject_activation_context_locvar_offset = 0;
 
 BOOL PAL_VirtualUnwind(CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *contextPointers)
 {
+#if !defined(TARGET_LIBNX)
     int st;
     unw_context_t unwContext;
     unw_cursor_t cursor;
+#endif
 
     DWORD64 curPc = CONTEXTGetPC(context);
 
@@ -681,6 +690,9 @@ BOOL PAL_VirtualUnwind(CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *contextP
         return TRUE;
     }
 
+#if defined(TARGET_LIBNX)
+    return CorUnix::LibnxUnwindNativeFrame(context, contextPointers);
+#else
     if ((context->ContextFlags & CONTEXT_EXCEPTION_ACTIVE) != 0)
     {
         // The current frame is a source of hardware exception. Due to the fact that
@@ -773,6 +785,7 @@ BOOL PAL_VirtualUnwind(CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *contextP
         GetContextPointers(&cursor, &unwContext, contextPointers);
     }
     return TRUE;
+#endif // TARGET_LIBNX
 }
 
 struct ExceptionRecords
