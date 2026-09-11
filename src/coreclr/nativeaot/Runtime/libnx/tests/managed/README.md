@@ -55,10 +55,10 @@ NativeAOT remains resident until process exit. The launcher sets
 hbmenu or free backing still used by live GC threads as a substitute for runtime
 unloading.
 
-The shared native reaper joins completed runtime/BCL pthreads after TLS
-destruction and kernel exit, releasing stacks and handles. Callbacks using this
-helper must return normally; arbitrary `pthread_exit` callbacks are outside its
-contract. One reaper remains for process lifetime.
+The shared native reaper queues completion through a TLS destructor on normal
+return or `pthread_exit`. It joins kernel termination before releasing stacks
+and handles, including when later TLS destructors are still active. One reaper
+and one completion TLS key remain for process lifetime.
 
 Primary platform references:
 [virtual-region selection](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/kernel/virtmem.c),

@@ -30,6 +30,10 @@ SET_DEFAULT_DEBUG_CHANNEL(THREAD); // some headers have code with asserts, so do
 
 #include <minipal/thread.h>
 #include <minipal/cpucount.h>
+#ifdef TARGET_LIBNX
+#include <libs/Common/pal_threading_libnx.h>
+#include "pal/threadnative.h"
+#endif
 
 #if defined(__NetBSD__) && !HAVE_PTHREAD_GETCPUCLOCKID
 #include <sys/cdefs.h>
@@ -666,7 +670,11 @@ CorUnix::InternalCreateThread(
     storedErrno = errno;
 #endif  // PTHREAD_CREATE_MODIFIES_ERRNO
 
+#ifdef TARGET_LIBNX
+    iError = LibnxCreateDetachedThreadWithAttributes(&pthread, &pthreadAttr, CPalThread::ThreadEntry, pNewThread);
+#else
     iError = pthread_create(&pthread, &pthreadAttr, CPalThread::ThreadEntry, pNewThread);
+#endif
 
 #if PTHREAD_CREATE_MODIFIES_ERRNO
     if (iError == 0)
@@ -1060,6 +1068,13 @@ CorUnix::InternalSetThreadPriority(
         goto InternalSetThreadPriorityExit;
     }
 
+#ifdef TARGET_LIBNX
+    if (!NativeSetThreadPriority(pTargetThread->GetPThreadSelf(), iNewPriority))
+    {
+        palError = ERROR_INTERNAL_ERROR;
+        goto InternalSetThreadPriorityExit;
+    }
+#else
     /* get the previous thread schedule parameters.  We need to know the
        scheduling policy to determine the priority range */
     if (pthread_getschedparam(
@@ -1156,6 +1171,7 @@ CorUnix::InternalSetThreadPriority(
         goto InternalSetThreadPriorityExit;
     }
 
+#endif
     pTargetThread->m_iThreadPriority = iNewPriority;
 
 InternalSetThreadPriorityExit:
@@ -2461,7 +2477,10 @@ void *
 CPalThread::GetStackBase()
 {
     void* stackBase;
-#ifdef TARGET_APPLE
+#ifdef TARGET_LIBNX
+    void* low;
+    if (!NativeGetCurrentStackBounds(&low, &stackBase)) abort();
+#elif defined(TARGET_APPLE)
     // This is a Mac specific method
     stackBase = pthread_get_stackaddr_np(pthread_self());
 #else
@@ -2505,7 +2524,10 @@ void *
 CPalThread::GetStackLimit()
 {
     void* stackLimit;
-#ifdef TARGET_APPLE
+#ifdef TARGET_LIBNX
+    void* high;
+    if (!NativeGetCurrentStackBounds(&stackLimit, &high)) abort();
+#elif defined(TARGET_APPLE)
     // This is a Mac specific method
     stackLimit = ((BYTE *)pthread_get_stackaddr_np(pthread_self()) -
                    pthread_get_stacksize_np(pthread_self()));
