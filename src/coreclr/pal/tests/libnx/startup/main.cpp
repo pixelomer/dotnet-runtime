@@ -165,7 +165,62 @@ static void testMemoryProbe() {
     check(mutex != nullptr && WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0, "unnamed mutex retains normal acquisition");
     check(ReleaseMutex(mutex) && CloseHandle(mutex), "unnamed mutex retains release and ownership retirement");
 }
-static void testFiles() {
+static bool testMappingFailures() {
+    const char* path = "sdmc:/switch/coreclr-pal-empty-input.bin";
+    FILE* seed = fopen(path, "wb");
+    check(seed != nullptr && fclose(seed) == 0, "create test-owned empty input");
+    auto empty = CreateFileW(W("sdmc:/switch/coreclr-pal-empty-input.bin"), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(empty != INVALID_HANDLE_VALUE, "open empty PAL input");
+    // Put a real file at descriptor zero so accidental cleanup is observable.
+    // Preserve and restore stdin even on the expected pre-fix regression path.
+    int savedInput = dup(0);
+    int control = open("sdmc:/switch/coreclr-pal-file-input.bin", O_RDONLY);
+    check(savedInput >= 0 && control >= 0 && dup2(control, 0) == 0, "install descriptor-zero sentinel");
+    int nextDescriptor = dup(control);
+    check(nextDescriptor >= 0 && close(nextDescriptor) == 0, "record available descriptor before failed mappings");
+    unsigned damaged = 0;
+    for (unsigned life = 0; life < 64; ++life) {
+        for (unsigned scenario = 0; scenario < 4; ++scenario) {
+            HANDLE mapping;
+            if (scenario == 0) mapping = CreateFileMappingW(nullptr, nullptr, PAGE_READONLY, 0, 0, nullptr);
+            else if (scenario == 1) mapping = CreateFileMappingW(empty, nullptr, PAGE_READWRITE, 0, 4, nullptr);
+            else if (scenario == 2) mapping = CreateFileMappingW(empty, nullptr, PAGE_READONLY, 0, 0, nullptr);
+            else mapping = CreateFileMappingW(empty, nullptr, PAGE_READONLY, 0, 4, nullptr);
+            DWORD error = GetLastError();
+            const DWORD expected[] = {ERROR_INVALID_PARAMETER, ERROR_ACCESS_DENIED, ERROR_FILE_INVALID, ERROR_NOT_ENOUGH_MEMORY};
+            check(mapping == nullptr && error == expected[scenario], "mapping failure retains its error contract");
+            char bytes[4];
+            bool intact = lseek(0, 0, SEEK_SET) == 0 && read(0, bytes, 4) == 4 && memcmp(bytes, "FILE", 4) == 0;
+            if (!intact) {
+                ++damaged;
+                check(dup2(control, 0) == 0, "repair sentinel after observed pre-fix cleanup failure");
+            }
+            check(lseek(control, 0, SEEK_SET) == 0 && read(control, bytes, 4) == 4 && memcmp(bytes, "FILE", 4) == 0,
+                "failed mapping preserves independent control descriptor");
+            int available = dup(control);
+            check(available == nextDescriptor && close(available) == 0, "failed mapping does not leak duplicated descriptors");
+        }
+    }
+    auto file = CreateFileW(W("sdmc:/switch/coreclr-pal-file-input.bin"), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(file != INVALID_HANDLE_VALUE && close(0) == 0, "make descriptor zero available for a successful mapping");
+    auto mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    check(mapping != nullptr, "successful mapping can own descriptor zero");
+    auto view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 4);
+    check(view != nullptr && memcmp(view, "FILE", 4) == 0 && CloseHandle(mapping), "live view retains mapping with descriptor zero");
+    char bytes[4];
+    check(lseek(0, 0, SEEK_SET) == 0 && read(0, bytes, 4) == 4 && memcmp(bytes, "FILE", 4) == 0,
+        "mapping descriptor zero remains live until final view retirement");
+    check(UnmapViewOfFile(view) && CloseHandle(file), "retire mapping owning descriptor zero");
+    errno = 0;
+    check(read(0, bytes, 1) == -1 && errno == EBADF, "successful mapping closes its owned descriptor zero");
+    check(dup2(savedInput, 0) == 0 && close(savedInput) == 0 && close(control) == 0, "restore original stdin and sentinel ownership");
+    check(CloseHandle(empty) && unlink(path) == 0, "retire empty test input");
+    fprintf(output, "MAPPING_FAILURES attempts=256 damaged_descriptor_zero=%u\n", damaged);
+    return damaged == 0;
+}
+static bool testFiles() {
     char path[512];
     check(GetFullPathNameA("sdmc:/switch/.././switch/missing-coreclr-probe.dll", sizeof(path), path, nullptr) &&
           strcmp(path, "sdmc:/switch/missing-coreclr-probe.dll") == 0, "mounted absolute path is not prefixed with cwd");
@@ -203,7 +258,9 @@ static void testFiles() {
         check(ReadFile(control, magic, 2, &read, nullptr) && read == 2 && magic[0] == 'F', "mapping retirement did not close another descriptor");
         check(CloseHandle(control), "retire final test file handle");
     }
+    bool failuresPass = testMappingFailures();
     check(unlink("sdmc:/switch/coreclr-pal-file-input.bin") == 0, "retire test-owned input");
+    return failuresPass;
 }
 int main(int argc, char** argv) {
     output = fopen("sdmc:/switch/coreclr-startup-probe.txt", "w");
@@ -218,7 +275,12 @@ int main(int argc, char** argv) {
     check(svcGetProcessId(&pid, CUR_PROCESS_HANDLE) == 0 && GetCurrentProcessId() == pid, "PAL process identity matches Horizon");
     check(OpenProcess(0, FALSE, static_cast<DWORD>(pid + 1)) == nullptr && GetLastError() == ERROR_NOT_SUPPORTED, "foreign process handles explicitly unsupported");
     testAssemblyTls();
-    testFiles();
+    if (!testFiles()) {
+        fprintf(output, "FAIL mapping failure cleanup damaged an unrelated descriptor\n");
+        PAL_Shutdown();
+        fclose(output);
+        return 1;
+    }
     testMemoryProbe();
     testChannel();
     testPalThreads();

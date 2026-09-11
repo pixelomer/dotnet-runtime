@@ -162,6 +162,9 @@ namespace CorUnix
     {
     public:
         INT     UnixFd;                     /* File descriptor. */
+        // Object storage is zero-initialized, without invoking a constructor.
+        // A failed creation may be reclaimed before UnixFd is assigned.
+        bool    OwnsFileDescriptor;
 
 #if ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS
         dev_t   MappedFileDevNum;           /* ID of device containing the file to be mapped */

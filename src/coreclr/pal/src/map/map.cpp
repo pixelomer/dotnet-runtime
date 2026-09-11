@@ -214,10 +214,11 @@ FileMappingCleanupRoutine(
             return;
         }
 
-        if (-1 != pLocalData->UnixFd)
+        if (pLocalData->OwnsFileDescriptor)
         {
             close(pLocalData->UnixFd);
             pLocalData->UnixFd = -1;
+            pLocalData->OwnsFileDescriptor = false;
             fDataChanged = TRUE;
         }
 
@@ -508,6 +509,8 @@ CorUnix::InternalCreateFileMapping(
                 goto ExitInternalCreateFileMapping;
             }
             bPALCreatedTempFile = TRUE;
+            // The mapping owns the filename even if a later size check fails.
+            pImmutableData->bPALCreatedTempFile = TRUE;
 #else // !CORECLR
             ASSERT("should not get here\n");
             palError = ERROR_INTERNAL_ERROR;
@@ -582,8 +585,6 @@ CorUnix::InternalCreateFileMapping(
         goto ExitInternalCreateFileMapping;
     }
 
-    pLocalData->UnixFd = UnixFd;
-
 #if ONE_SHARED_MAPPING_PER_FILEREGION_PER_PROCESS
     if (-1 == UnixFd)
     {
@@ -607,6 +608,12 @@ CorUnix::InternalCreateFileMapping(
         }
     }
 #endif
+
+    // Transfer descriptor ownership only after every fallible data query.
+    // RegisterObject consumes the mapping reference on success and failure.
+    pLocalData->UnixFd = UnixFd;
+    pLocalData->OwnsFileDescriptor = UnixFd != -1;
+    UnixFd = -1;
 
     pLocalDataLock->ReleaseLock(pThread, TRUE);
     pLocalDataLock = NULL;
@@ -644,16 +651,11 @@ ExitInternalCreateFileMapping:
     if (NULL != pMapping)
     {
         pMapping->ReleaseReference(pThread);
+    }
 
-        if (bPALCreatedTempFile)
-        {
-            unlink(pImmutableData->lpFileName);
-        }
-
-        if (-1 != UnixFd)
-        {
-            close(UnixFd);
-        }
+    if (-1 != UnixFd)
+    {
+        close(UnixFd);
     }
 
     if (NULL != pRegisteredMapping)

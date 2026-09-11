@@ -23,7 +23,10 @@ Outputs are in `artifacts/libnx-coreclr-startup`, including ELF, map and NRO.
 The NRO overwrites `sdmc:/switch/coreclr-startup-probe.txt` and requests
 application exit to HOME. Preserve an existing log before running it. The file checks also overwrite and
 then remove `sdmc:/switch/coreclr-pal-file-input.bin`; preserve an existing file
-at that path before running the probe.
+at that path before running the probe. Mapping-failure checks also overwrite
+and remove `sdmc:/switch/coreclr-pal-empty-input.bin`; preserve that file too.
+They temporarily replace descriptor zero with a sentinel, restore stdin, and
+check ownership after failed creation and successful final-view retirement.
 
 The probe calls PAL_InitializeCoreCLR(argv[0], TRUE), including the object
 manager, synchronization worker, initial PAL thread, memory allocators, module
