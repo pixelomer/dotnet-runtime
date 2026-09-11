@@ -1525,7 +1525,13 @@ int32_t SystemNative_CopyFile(intptr_t sourceFd, intptr_t destinationFd, int64_t
     // Even though managed code created the file with permissions matching those of the source file,
     // we need to copy permissions because the open permissions may be filtered by 'umask'.
     while ((ret = fchmod(outFd, sourceStat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO))) < 0 && errno == EINTR);
-    if (ret != 0 && errno != EPERM) // See EPERM comment above
+    if (ret != 0 && errno != EPERM
+#ifdef TARGET_LIBNX
+        // fsdev exports fchmod but explicitly returns ENOSYS: the filesystem
+        // has no POSIX mode bits to preserve. Keep the completed data copy.
+        && errno != ENOSYS && errno != ENOTSUP
+#endif
+       ) // See EPERM comment above
     {
         return -1;
     }
