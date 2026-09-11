@@ -64,6 +64,8 @@ extern "C" void LibnxDispatchHardwareException(LibnxExceptionState* state)
     // We have returned from kernel exception mode onto a per-thread stack.
     // The original managed stack is untouched. Do not allocate or enter GC.
     if (state != tls_LibnxExceptionState || state->active != 1 || !hardwareHandler) abort();
+    if (LibnxRuntimeHardwareFault)
+        LibnxRuntimeHardwareFault(&state->context, state->far, state->esr);
     uint32_t ec = state->esr >> 26;
     if (ec != 0x24) abort(); // Only EL0 data aborts are currently translated.
     uintptr_t code = 0xc0000005u; // STATUS_ACCESS_VIOLATION

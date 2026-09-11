@@ -29,6 +29,10 @@ bool LibnxInitializeExceptionState(void);
 void LibnxDestroyExceptionState(void);
 void LibnxDispatchHardwareException(LibnxExceptionState* state) __attribute__((noreturn));
 void LibnxRestoreHardwareThrow(ThreadContext* context) __attribute__((noreturn));
+// Optional diagnostic observer, called after leaving kernel exception mode.
+// It must not allocate, take locks, enter managed code, mutate the context, or
+// retain the context pointer. Copy only into preallocated native storage.
+void LibnxRuntimeHardwareFault(const ThreadContext* context, uint64_t far, uint32_t esr) __attribute__((weak));
 #ifdef __cplusplus
 }
 #endif
