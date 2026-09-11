@@ -39,6 +39,8 @@ if(NOT DEFINED ANDROID_BUILD)
   elseif(EXISTS ${CROSS_ROOTFS}/usr/platform/i86pc)
     set(ILLUMOS 1)
     set(CLR_CMAKE_TARGET_OS sunos)
+  elseif(EXISTS ${CROSS_ROOTFS}/libnx/include/switch.h AND TARGET_ARCH_NAME STREQUAL "arm64")
+    set(LIBNX 1)
   elseif(EXISTS /System/Library/CoreServices)
     set(DARWIN 1)
   elseif(EXISTS ${CROSS_ROOTFS}/etc/tizen-release)
@@ -102,7 +104,16 @@ elseif(DEFINED ANDROID_BUILD OR TARGET_ARCH_NAME MATCHES "^(armel|arm|armv6|arm6
     set_cache_value(HAVE_SHM_OPEN_THAT_WORKS_WELL_ENOUGH_WITH_MMAP_EXITCODE 0)
   endif()
 
-  if (FREEBSD)
+  if(LIBNX)
+    # Horizon provides neither Unix procfs nor a file-backed mmap pager. Set
+    # both results and exit codes so a reconfigure also repairs cached Linux
+    # assumptions from an earlier version of this cross-target description.
+    foreach(feature HAVE_PROCFS_CTL HAVE_PROCFS_STAT HAVE_PROCFS_STATM
+        HAVE_MMAP_DEV_ZERO HAVE_SHM_OPEN_THAT_WORKS_WELL_ENOUGH_WITH_MMAP)
+      set_cache_value(${feature} 0)
+      set_cache_value(${feature}_EXITCODE 1)
+    endforeach()
+  elseif (FREEBSD)
     set_cache_value(HAVE_SHM_OPEN_THAT_WORKS_WELL_ENOUGH_WITH_MMAP 1)
     set_cache_value(HAVE_CLOCK_MONOTONIC 1)
     set_cache_value(HAVE_CLOCK_REALTIME 1)
