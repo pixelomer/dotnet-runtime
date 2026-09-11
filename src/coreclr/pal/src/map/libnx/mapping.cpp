@@ -16,7 +16,7 @@ extern "C" {
 namespace {
 constexpr size_t Page = 4096;
 struct Backing { void* memory; size_t livePages; };
-struct Entry { Backing* backing; size_t offset; int protection; bool reserved, writableAllowed, dataState; size_t writers; };
+struct Entry { Backing* backing; size_t offset; int protection; bool reserved, writableAllowed, dataState, executableAllowed; size_t writers; };
 struct Region { Region* next; uintptr_t base; size_t pages; Entry* entries; VirtmemReservation* reservation; };
 struct ViewSegment { ViewSegment* next; size_t offset, bytes; };
 struct View { View* next; ViewSegment* segments; uintptr_t primary, writable; size_t bytes; void* result; VirtmemReservation* reservation; };
@@ -142,7 +142,7 @@ void* NativeMap(void* address, size_t size, int protection, int flags, int fd, o
         free(backing->memory); free(backing); if (isNew) RemoveNew(r); return Fail(error);
     }
     backing->livePages = bytes / Page;
-    for (size_t i = 0; i < bytes / Page; ++i) r->entries[first + i] = {backing, i * Page, protection, true, anonymous || (flags & MapPrivate) != 0, permission == Perm_Rw, 0};
+    for (size_t i = 0; i < bytes / Page; ++i) r->entries[first + i] = {backing, i * Page, protection, true, anonymous || (flags & MapPrivate) != 0, permission == Perm_Rw, (protection & MapExecute) != 0, 0};
     if (protection & MapExecute) armICacheInvalidate(reinterpret_cast<void*>(base), bytes);
     return reinterpret_cast<void*>(base);
 }
@@ -198,10 +198,12 @@ int NativeProtect(void* address, size_t size, int protection) {
         const Entry& e = r->entries[i];
         if (!e.backing) { errno = EINVAL; return -1; }
         if ((protection & MapWrite) && !e.writableAllowed) { errno = EACCES; return -1; }
-        // AliasCode -> AliasCodeData is irreversible. Executable images must
-        // use writer aliases, never transiently remove/remap their primary view.
-        if (((protection & MapExecute) && e.dataState) ||
-            ((protection & MapWrite) && (e.protection & MapExecute))) { errno = ENOTSUP; return -1; }
+        // Executability is a mapping-time capability. AliasCode -> AliasCodeData
+        // is irreversible, so executable views use writers even while temporarily
+        // R/None. Non-executable views can change data permissions but never gain X.
+        // This also preserves API capabilities after a rolled-back protection call.
+        if (((protection & MapExecute) && !e.executableAllowed) ||
+            ((protection & MapWrite) && e.executableAllowed)) { errno = ENOTSUP; return -1; }
     }
     size_t i = first;
     for (; i < end; ++i) {

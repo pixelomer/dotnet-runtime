@@ -91,6 +91,9 @@ static void* worker(void*) {
         check(VirtualProtect(code, 4096, PAGE_NOACCESS, &old) && old == PAGE_EXECUTE_READ, "executable page can become inaccessible");
         check(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &old) && old == PAGE_NOACCESS, "restore execute without writable state");
         check(reinterpret_cast<uint64_t(*)()>(code)() == 43, "code retained after no-access transition");
+        check(VirtualProtect(code, 4096, PAGE_READONLY, &old), "executable capability with read-only permission");
+        check(!VirtualProtect(code, 4096, PAGE_READWRITE, &old) && permission(code) == Perm_R, "intermediate read-only state cannot bypass writer requirement");
+        check(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &old) && reinterpret_cast<uint64_t(*)()>(code)() == 43, "execute capability retained after rejected write protection");
         check(NativeUnmap(code, 4096) == 0, "retire executable section");
         auto small = static_cast<unsigned char*>(NativeMap(nullptr, 1, MapRead, MapPrivate, fd, 0));
         check(small != MapFailed && memcmp(small, pattern, 4096) == 0, "whole last page reflects file bytes");
@@ -108,12 +111,13 @@ static void* worker(void*) {
 static void failureChecks() {
     auto memory = static_cast<unsigned char*>(NativeMap(nullptr, 8192, MapRead, MapPrivate, fd, 0));
     check(memory != MapFailed, "rollback test allocation");
+    check(NativeProtect(memory, 8192, MapRead | MapExecute) == -1, "non-executable mapping cannot acquire execute capability");
     failProtect = 2;
     check(NativeProtect(memory, 8192, MapRead | MapWrite) == -1, "injected second-page protect failure");
     check(permission(memory) == Perm_R && permission(memory + 4096) == Perm_R, "failed protection restores earlier page permissions");
     check(memcmp(memory, pattern, 8192) == 0, "failed protection preserves bytes");
     // Page zero is now AliasCodeData even though its R permission was restored.
-    // A mixed-state range must validate completely before changing either page.
+    // Its API capabilities remain identical to those before the failed call.
     check(NativeProtect(memory, 8192, MapRead | MapExecute) == -1, "data-state cannot be promoted to executable");
     check(permission(memory) == Perm_R && permission(memory + 4096) == Perm_R, "unsupported mixed-state protection leaves whole range intact");
     check(NativeProtect(memory, 8192, MapRead | MapWrite) == 0, "mixed code/data states become writable using correct kernel APIs");
