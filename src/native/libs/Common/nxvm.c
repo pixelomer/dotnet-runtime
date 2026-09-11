@@ -188,3 +188,17 @@ end:
 NxvmStats nxvm_stats(void) {
     mutexLock(&lock); NxvmStats result = stats; mutexUnlock(&lock); return result;
 }
+
+bool nxvm_is_committed(void *address, size_t bytes) {
+    mutexLock(&lock);
+    size_t first = 0;
+    Region *r = find_region(address, bytes, &first);
+    bool ok = r && !stats.poisoned;
+    if (ok) {
+        for (size_t i = first; i < first + bytes / PAGE; i++) {
+            if (!r->backing[i]) { ok = false; break; }
+        }
+    }
+    mutexUnlock(&lock);
+    return ok;
+}

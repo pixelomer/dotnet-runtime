@@ -20,4 +20,6 @@ void *nxvm_reserve(size_t bytes, size_t alignment);
 bool nxvm_commit(void *address, size_t bytes); // Idempotent; fresh pages are zero.
 bool nxvm_decommit(void *address, size_t bytes); // Idempotent; backing is reusable.
 bool nxvm_release(void *address, size_t bytes);
+// Validate an owned, fully committed range without changing its contents.
+bool nxvm_is_committed(void *address, size_t bytes);
 NxvmStats nxvm_stats(void);

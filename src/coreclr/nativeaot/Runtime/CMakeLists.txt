@@ -170,7 +170,7 @@ else()
       ${CLR_DIR}/../native/libs/Common/pal_threading_libnx.c
       ${CLR_DIR}/../native/libs/Common/nxvm.c
       libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c
-      ${CLR_DIR}/../native/libs/Common/libnx_threads.c libnx/GCToOS.cpp)
+      ${CLR_DIR}/../native/libs/Common/libnx_threads.c ${CLR_DIR}/gc/libnx/gcenv.libnx.cpp)
     # Horizon uses its own exception and suspension adapters instead of Linux
     # cgroups, NUMA, signal handlers and the subprocess crash dumper.
   else()

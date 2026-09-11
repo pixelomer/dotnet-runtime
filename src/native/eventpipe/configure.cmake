@@ -12,8 +12,8 @@ check_symbol_exists(
     sys/socket.h
     HAVE_ACCEPT4)
 
-# Use TCP for EventPipe on mobile platforms
-if (CLR_CMAKE_HOST_IOS OR CLR_CMAKE_HOST_TVOS OR CLR_CMAKE_HOST_ANDROID)
+# Use the existing TCP transport where Unix-domain sockets are unavailable.
+if (CLR_CMAKE_HOST_IOS OR CLR_CMAKE_HOST_TVOS OR CLR_CMAKE_HOST_ANDROID OR CLR_CMAKE_TARGET_LIBNX)
   set(FEATURE_PERFTRACING_PAL_TCP 1)
   set(FEATURE_PERFTRACING_DISABLE_DEFAULT_LISTEN_PORT 1)
 endif()

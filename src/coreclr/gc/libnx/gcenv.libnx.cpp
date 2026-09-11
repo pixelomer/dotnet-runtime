@@ -1,6 +1,6 @@
-// Horizon GC OS interface backed by bounded data-only memory reservations.
+// Shared Horizon GC OS interface for NativeAOT and CoreCLR.
 #include "common.h"
-#include "LibnxDiagnostics.h"
+#include "../../../native/libs/Common/libnx_diagnostics.h"
 #include <cstdio>
 #include "gcenv.structs.h"
 #include "gcenv.base.h"
@@ -14,14 +14,16 @@ extern "C" {
 #include <pthread.h>
 #include <cstdlib>
 extern "C" {
-#include "nxvm.h"
+#include "../../../native/libs/Common/nxvm.h"
 }
 
 uint32_t g_pageSizeUnixInl = 4096;
 static AffinitySet s_affinity;
 static uint32_t s_cpuCount;
+static uint32_t s_maxCpuCount;
+static uint64_t s_allowedCoreMask;
 // Kernel-backed rendezvous of registered runtime threads, including GC workers.
-// See THREAD_ORDERING.md; this is not a local DMB or permission-change TLBI.
+// See src/coreclr/nativeaot/Runtime/libnx/THREAD_ORDERING.md for this protocol.
 extern "C" void LibnxFlushProcessWriteBuffers();
 
 static void CheckResult(Result rc) { if (R_FAILED(rc)) abort(); }
@@ -38,11 +40,13 @@ bool GCToOSInterface::Initialize()
     // .NET 10 AffinitySet owns dynamic storage; size it for every kernel mask bit.
     if (!s_affinity.Initialize(64)) return false;
     s_cpuCount = 0;
+    s_maxCpuCount = 0;
     for (unsigned i = 0; i < 64; ++i)
-        if (coreMask & (uint64_t(1) << i)) { s_affinity.Add(i); ++s_cpuCount; }
+        if (coreMask & (uint64_t(1) << i)) { s_affinity.Add(i); ++s_cpuCount; s_maxCpuCount = i + 1; }
     if (!s_cpuCount) return false;
+    s_allowedCoreMask = coreMask;
     // Explicit bounded backing budget; failure is real OOM, not an unbounded
-    // malloc-backed substitute for virtual reservation. Configuration is pending.
+    // malloc-backed substitute for virtual reservation. This is the default pool size.
     if (!nxvm_ensure_initialized(size_t(512) << 20)) return false;
     return true;
 }
@@ -72,7 +76,10 @@ bool GCToOSInterface::VirtualDecommit(void* address, size_t size) { return nxvm_
 void* GCToOSInterface::VirtualReserveAndCommitLargePages(size_t, uint16_t) { return nullptr; }
 // Reset is only an advisory discard; preserving the bytes and commitment is
 // allowed. Do not release pages that the GC can still access without recommit.
-bool GCToOSInterface::VirtualReset(void*, size_t, bool) { return true; }
+bool GCToOSInterface::VirtualReset(void* address, size_t size, bool)
+{
+    return nxvm_is_committed(address, PageSize(size));
+}
 bool GCToOSInterface::SupportsWriteWatch() { return false; }
 void GCToOSInterface::ResetWriteWatch(void*, size_t) { abort(); }
 bool GCToOSInterface::GetWriteWatch(bool, void*, size_t, void**, uintptr_t*) { return false; }
@@ -109,8 +116,15 @@ bool GCToOSInterface::SetThreadAffinity(uint16_t core)
 bool GCToOSInterface::BoostThreadPriority() { return false; }
 const AffinitySet* GCToOSInterface::SetGCThreadsAffinitySet(uintptr_t mask, const AffinitySet* config)
 {
-    for (unsigned i=0; i<64; ++i)
-        if ((!config->IsEmpty() && !config->Contains(i)) || (mask && !(mask & (uintptr_t(1) << i)))) s_affinity.Remove(i);
+    // Recompute from the kernel's allowed set. Reapplying a configuration must
+    // not progressively shrink the process's original capabilities.
+    for (unsigned i=0; i<64; ++i) {
+        bool enabled = (s_allowedCoreMask & (uint64_t(1) << i)) &&
+            (config->IsEmpty() || (i < config->MaxCpuCount() && config->Contains(i))) &&
+            (!mask || (mask & (uintptr_t(1) << i)));
+        if (enabled) s_affinity.Add(i);
+        else s_affinity.Remove(i);
+    }
     return &s_affinity;
 }
 size_t GCToOSInterface::GetVirtualMemoryLimit()
@@ -144,6 +158,7 @@ int64_t GCToOSInterface::QueryPerformanceCounter() { return armGetSystemTick(); 
 int64_t GCToOSInterface::QueryPerformanceFrequency() { return armGetSystemTickFreq(); }
 uint64_t GCToOSInterface::GetLowPrecisionTimeStamp() { return armGetSystemTick() / (armGetSystemTickFreq() / 1000); }
 uint32_t GCToOSInterface::GetTotalProcessorCount() { return s_cpuCount; }
+uint32_t GCToOSInterface::GetMaxProcessorCount() { return s_maxCpuCount; }
 bool GCToOSInterface::CanEnableGCNumaAware() { return false; }
 bool GCToOSInterface::GetNumaInfo(uint16_t*, uint32_t*) { return false; }
 bool GCToOSInterface::CanEnableGCCPUGroups() { return false; }
