@@ -3,6 +3,9 @@
 The runtime baseline is .NET 10.0.12, public commit
 `4271d88e0aebf3d04f188f1334c2220d80555ef6`.
 
+The [Horizon hosting profile](libnx-supported-profile.md) summarizes source-built
+inputs, IL deployment rules, lifecycle and unsupported platform facilities.
+
 ## Native contexts
 
 The PAL's `native_context_t` uses libnx's `ThreadContext`.

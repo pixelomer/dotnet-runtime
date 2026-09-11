@@ -1,5 +1,8 @@
 # Horizon runtime ownership and platform boundaries
 
+See the [Horizon hosting profile](libnx-supported-profile.md) for required inputs,
+IL deployment checks and runtime lifetime limits.
+
 ## PAL mapping failure ownership
 
 Mapping-object storage is zero-initialized without invoking a constructor.
