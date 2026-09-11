@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <string.h>
+#include <sys/stat.h>
 extern int32_t SystemNative_PRead(intptr_t,void*,int32_t,int64_t);
 extern int32_t SystemNative_PWrite(intptr_t,void*,int32_t,int64_t);
 extern int32_t SystemNative_Read(intptr_t,void*,int32_t);
@@ -36,6 +37,33 @@ static void* Worker(void* arg) {
         Check(memcmp(data,readback,sizeof(data))==0);
     }
     return NULL;
+}
+static void Directories(void) {
+    const char* directory = "sdmc:/switch/nativeaot-fileio-owned-dir";
+    const char* child = "sdmc:/switch/nativeaot-fileio-owned-dir/child.bin";
+    // Exclusive directory creation establishes ownership before cleanup.
+    for (unsigned round = 0; round < 32; ++round) {
+        int created = mkdir(directory, 0700);
+        Check(created == 0);
+        if (created != 0) return;
+        int file = open(child, O_RDWR | O_CREAT | O_EXCL, 0600);
+        Check(file >= 0);
+        if (file < 0) { Check(rmdir(directory) == 0); return; }
+        Check(write(file, "owned", 5) == 5);
+        Check(close(file) == 0);
+        errno = 0;
+        int removed = rmdir(directory);
+        int error = errno;
+        Result fsResult = fsdevGetLastResult();
+        Check(removed == -1 && error == ENOTEMPTY);
+        struct stat info;
+        Check(stat(child, &info) == 0 && info.st_size == 5);
+        Check(unlink(child) == 0);
+        Check(rmdir(directory) == 0);
+        errno = 0;
+        Check(rmdir(directory) == -1 && errno == ENOENT);
+        fprintf(logFile, "DIRECTORY round=%u result=%d errno=%d fs_result=%08x\n", round, removed, error, fsResult);
+    }
 }
 int main(void) {
     const char* name="sdmc:/switch/nativeaot-fileio-test.bin";
@@ -104,6 +132,7 @@ int main(void) {
     Check(lseek(fd,0,SEEK_CUR)==0);
     Check(SystemNative_Close(fd)==0);
     Check(unlink(name)==0);
+    Directories();
     fprintf(log,"%s checks=%u failures=%u; 4x1000 positional I/O cycles\n",failures?"FAIL":"PASS",checks,failures);
     fclose(log);
     return failures?1:0;

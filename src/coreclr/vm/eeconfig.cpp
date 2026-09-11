@@ -455,7 +455,13 @@ HRESULT EEConfig::sync()
     pReadyToRunExcludeList = NULL;
 
 #if defined(FEATURE_READYTORUN)
+#ifdef TARGET_LIBNX
+    // Available ReadyToRun producers do not emit the Horizon ABI or its
+    // cooperative GC polls. Compile their IL through the target JIT instead.
+    fReadyToRun = false;
+#else
     fReadyToRun = CLRConfig::GetConfigValue(CLRConfig::EXTERNAL_ReadyToRun);
+#endif
 
     if (fReadyToRun)
     {

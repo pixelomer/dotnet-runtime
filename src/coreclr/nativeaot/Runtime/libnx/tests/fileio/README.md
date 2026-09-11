@@ -41,3 +41,9 @@ ownership. Exhaustion rounds retain actual duplicates until the table is full,
 check EMFILE, close the duplicates and verify recovery with the original input.
 This native probe does not replace managed FileStream/RandomAccess, path
 normalization, asynchronous I/O or file-locking checks.
+
+The directory workload creates `sdmc:/switch/nativeaot-fileio-owned-dir`
+exclusively and creates its child exclusively. Nonempty removal must fail with
+ENOTEMPTY and leave the child intact. The probe then removes its child and
+empty directory and checks ENOENT on a second removal. Use the pinned SDK in
+the linked thread recipe, including its nonempty-directory error translation.

@@ -77,6 +77,54 @@ PhaseStatus Compiler::fgInsertGCPolls()
 {
     PhaseStatus result = PhaseStatus::MODIFIED_NOTHING;
 
+#ifdef TARGET_LIBNX
+    // Horizon cannot deliver an asynchronous activation callback to another
+    // thread. Use the ordinary GC poll helper and GC-info machinery instead.
+    // An entry poll covers interprocedural cycles (including fast tail calls);
+    // a poll on every backward edge covers cycles inside a method, including
+    // irreducible loops. Block numbers need only be unique: any directed cycle
+    // has an edge whose destination number is no greater than its source.
+    // Select blocks before inserting polls, which themselves extend the graph.
+    // The poll implementation must reach its native transition without polling
+    // itself. Identify the CoreLib intrinsic, not an application method name.
+    bool isPollHelper = info.compCompHnd->isIntrinsic(info.compMethodHnd) &&
+                        lookupNamedIntrinsic(info.compMethodHnd) == NI_System_Threading_Thread_PollGC;
+    bool needsEntryPoll = false;
+    if (!opts.jitFlags->IsSet(JitFlags::JIT_FLAG_AOT) && !isPollHelper)
+    {
+        for (BasicBlock* block : Blocks())
+        {
+            // Leaf methods cannot participate in interprocedural cycles. In
+            // particular, the GC helper's P/Invoke-only worker must enter the
+            // native transition rather than reenter the managed poll helper.
+            needsEntryPoll |= block->endsWithTailCallOrJmp(this, true);
+            for (Statement* statement : block->NonPhiStatements())
+            {
+                if ((statement->GetRootNode()->gtFlags & GTF_CALL) == 0) continue;
+                for (GenTree* tree : statement->TreeList())
+                {
+                    if (tree->OperIs(GT_CALL) && !tree->AsCall()->IsUnmanaged() && !tree->AsCall()->IsHelperCall())
+                        needsEntryPoll = true;
+                }
+            }
+            block->VisitRegularSuccs(this, [this, block](BasicBlock* successor) {
+                if (successor->bbNum <= block->bbNum)
+                {
+                    block->SetFlags(BBF_NEEDS_GCPOLL);
+                    optMethodFlags |= OMF_NEEDS_GCPOLLS;
+                }
+                return BasicBlockVisit::Continue;
+            });
+        }
+        if (needsEntryPoll)
+        {
+            fgCreateNewInitBB();
+            fgFirstBB->SetFlags(BBF_NEEDS_GCPOLL);
+            optMethodFlags |= OMF_NEEDS_GCPOLLS;
+        }
+    }
+#endif
+
     if ((optMethodFlags & OMF_NEEDS_GCPOLLS) == 0)
     {
         return result;
@@ -114,9 +162,18 @@ PhaseStatus Compiler::fgInsertGCPolls()
 
         // If we're doing GCPOLL_CALL, just insert a GT_CALL node before the last node in the block.
 
-        assert(block->KindIs(BBJ_RETURN, BBJ_ALWAYS, BBJ_COND, BBJ_SWITCH, BBJ_THROW, BBJ_CALLFINALLY));
-
         GCPollType pollType = GCPOLL_INLINE;
+#ifdef TARGET_LIBNX
+        // EH continuation/return blocks can also be on a backward edge. Keep
+        // their special transfer intact by placing a call at block entry.
+        if (!block->KindIs(BBJ_RETURN, BBJ_ALWAYS, BBJ_COND, BBJ_SWITCH, BBJ_THROW, BBJ_CALLFINALLY))
+        {
+            assert(block->HasFlag(BBF_NEEDS_GCPOLL));
+            pollType = GCPOLL_CALL;
+        }
+#else
+        assert(block->KindIs(BBJ_RETURN, BBJ_ALWAYS, BBJ_COND, BBJ_SWITCH, BBJ_THROW, BBJ_CALLFINALLY));
+#endif
 
         // We'd like to insert an inline poll. Below is the list of places where we
         // can't or don't want to emit an inline poll. Check all of those. If after all of that we still

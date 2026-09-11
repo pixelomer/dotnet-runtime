@@ -13,6 +13,7 @@
 extern "C" const void* GlobalizationResolveDllImport(const char* name);
 #ifdef TARGET_LIBNX
 extern "C" const void* SystemResolveDllImport(const char* name);
+extern "C" const void* CompressionResolveDllImport(const char* name);
 #endif
 
 namespace
@@ -41,6 +42,10 @@ static const void* DefaultResolveDllImport(const char* libraryName, const char* 
     if (strcmp(libraryName, "libSystem.Native") == 0)
     {
         return SystemResolveDllImport(entrypointName);
+    }
+    if (strcmp(libraryName, "libSystem.IO.Compression.Native") == 0)
+    {
+        return CompressionResolveDllImport(entrypointName);
     }
 #endif
     return nullptr;

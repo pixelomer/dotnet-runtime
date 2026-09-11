@@ -37,3 +37,43 @@ The native probe exhausts the descriptor table, closes its duplicates, then
 checks duplication recovery and reads the original file. CoreCLR and NativeAOT
 share this implementation; the native workload does not exercise managed
 asynchronous file I/O.
+
+## Cooperative CoreCLR GC polls
+
+Horizon uses the existing JIT GC-poll phase, helper and GC-info machinery.
+Backward edges receive polls, including irreducible loops. Methods with managed
+calls or tail/jump transfers receive entry polls to cover interprocedural cycles;
+leaf methods avoid this entry cost. Special EH transfers use a call poll without
+altering the transfer itself.
+
+The runtime marks its own CoreLib PollGC helper as an intrinsic before compiling
+it, preventing recursive instrumentation. NativeAOT code generation retains its
+separate suspension policy. ReadyToRun execution is disabled on Horizon so IL
+passes through the target JIT and its ABI/polling rules. This does not implement
+asynchronous native activation or suspension of arbitrary external native code.
+
+The [suspension probe](../../src/coreclr/pal/tests/libnx/host/README.md) checks
+ordinary and try/catch/finally loops with live object and interior roots.
+Independent non-inlined address samples check relocation; a native watchdog
+releases stalled workers. It supports FullOpts and MinOpts selections.
+
+Platform references:
+[libnx thread APIs](https://github.com/switchbrew/libnx/blob/7644c9b26099aa2d2145bc72a21ee24190e92085/nx/include/switch/kernel/svc.h),
+[Atmosphere debug API](https://github.com/Atmosphere-NX/Atmosphere/blob/5388824be146a89619e8d641acd64599cf1c5f62/libraries/libmesosphere/source/svc/kern_svc_debug.cpp).
+These are interface/behavior references, not incorporated GPL implementation.
+
+## Framework and directory contracts
+
+The host's BCL workload uses the source-built Horizon framework with matching
+CoreLib. It exercises files and async I/O, timers and cancellation, reflection,
+generated IL, collectible assemblies, JSON, Unicode and compression. Globalization
+is invariant. The native compression import resolver uses the existing static
+export table and links the source-built Brotli encoder, decoder and common
+archives along with zlib.
+
+The required libnx SDK translates nonempty-directory result 0x1002 to ENOTEMPTY,
+which permits the existing managed recursive deletion algorithm to operate.
+The [native file-I/O probe](../../src/coreclr/nativeaot/Runtime/libnx/tests/fileio/README.md)
+creates owned directories and children, verifies failure preserves a child,
+then retires them and checks missing-directory errors. This SDK behavior is
+shared by CoreCLR and NativeAOT.

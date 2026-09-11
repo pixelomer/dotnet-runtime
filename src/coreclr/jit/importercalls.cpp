@@ -11176,6 +11176,10 @@ NamedIntrinsic Compiler::lookupNamedIntrinsic(CORINFO_METHOD_HANDLE method)
                         {
                             result = NI_System_Threading_Thread_FastPollGC;
                         }
+                        else if (strcmp(methodName, "PollGC") == 0)
+                        {
+                            result = NI_System_Threading_Thread_PollGC;
+                        }
                     }
                     else if (strcmp(className, "Volatile") == 0)
                     {
