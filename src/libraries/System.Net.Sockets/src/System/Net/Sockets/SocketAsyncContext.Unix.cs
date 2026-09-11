@@ -785,7 +785,9 @@ namespace System.Net.Sockets
             private AsyncOperation? _tail;   // Queue of pending IO operations to process when data becomes available.
 
 #if TARGET_LIBNX
-            internal bool IsEmpty => _tail == null;
+            // The poll engine snapshots interest without taking the operation
+            // queue lock. Observe publication/retirement with acquire semantics.
+            internal bool HasPendingOperations => Volatile.Read(ref _tail) != null;
 #endif
 
             // The _queueLock is used to ensure atomic access to the queue state above.
@@ -1270,8 +1272,8 @@ namespace System.Net.Sockets
         internal int GlobalContextIndex = -1;
 
 #if TARGET_LIBNX
-        internal bool HasPendingReads => !_receiveQueue.IsEmpty;
-        internal bool HasPendingWrites => !_sendQueue.IsEmpty;
+        internal bool HasPendingReads => _receiveQueue.HasPendingOperations;
+        internal bool HasPendingWrites => _sendQueue.HasPendingOperations;
 #endif
 
         private readonly object _registerLock = new object();

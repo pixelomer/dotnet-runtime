@@ -104,6 +104,9 @@ operation queue is nonempty. Registered sockets with no queued operation are
 omitted from the poll call; when none remain, the engine sleeps before taking
 a fresh snapshot. Level-triggered unread data therefore does not make an idle
 registration spin. New operations are picked up on the next bounded iteration.
+The pending-operation snapshot uses Volatile.Read on each queue tail to acquire
+publication/retirement. This is a speculative interest observation; the existing
+queue lock and normal operation machinery still own completion.
 
 Both socket hosts link SocketPollTrace.cpp, which counts calls while forwarding
 every poll unchanged. The shared workload cancels a read, leaves a byte unread
