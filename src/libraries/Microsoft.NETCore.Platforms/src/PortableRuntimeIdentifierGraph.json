@@ -468,11 +468,6 @@
           "any"
         ]
       },
-      "win-arm": {
-        "#import": [
-          "win"
-        ]
-      },
       "win-arm64": {
         "#import": [
           "win"

@@ -1,9 +1,11 @@
 set(GC_DIR ../../gc)
+set(RUNTIME_DIR ../../runtime)
 
 set(COMMON_RUNTIME_SOURCES
     allocheap.cpp
     rhassert.cpp
-    CachedInterfaceDispatch.cpp
+    ${RUNTIME_DIR}/CachedInterfaceDispatch.cpp
+    CachedInterfaceDispatch_Aot.cpp
     Crst.cpp
     DebugHeader.cpp
     MethodTable.cpp
@@ -18,6 +20,7 @@ set(COMMON_RUNTIME_SOURCES
     gcenv.ee.cpp
     GcStressControl.cpp
     HandleTableHelpers.cpp
+    interoplibinterface_java.cpp
     MathHelpers.cpp
     MiscHelpers.cpp
     TypeManager.cpp
@@ -36,6 +39,7 @@ set(COMMON_RUNTIME_SOURCES
     yieldprocessornormalized.cpp
 
     ${GC_DIR}/gceventstatus.cpp
+    ${GC_DIR}/gcbridge.cpp
     ${GC_DIR}/gcload.cpp
     ${GC_DIR}/gcconfig.cpp
     ${GC_DIR}/gchandletable.cpp
@@ -49,10 +53,14 @@ set(COMMON_RUNTIME_SOURCES
     ${GC_DIR}/handletablescan.cpp
     ${GC_DIR}/objecthandle.cpp
     ${GC_DIR}/softwarewritewatch.cpp
-
-    ${CLR_SRC_NATIVE_DIR}/minipal/cpufeatures.c
-    ${CLR_SRC_NATIVE_DIR}/minipal/time.c
+    ${CLR_SRC_NATIVE_DIR}/minipal/xoshiro128pp.c
 )
+
+if (CLR_CMAKE_TARGET_UNIX AND NOT CLR_CMAKE_TARGET_ARCH_WASM)
+    list(APPEND COMMON_RUNTIME_SOURCES
+        ${RUNTIME_DIR}/asyncsafethreadmap.cpp
+    )
+endif()
 
 set(SERVER_GC_SOURCES
     ${GC_DIR}/gceesvr.cpp
@@ -78,6 +86,7 @@ include_directories(.)
 include_directories(${GC_DIR})
 include_directories(${GC_DIR}/env)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/eventpipe/inc)
+include_directories(${RUNTIME_DIR})
 
 if (WIN32)
   set(GC_HEADERS
@@ -119,8 +128,8 @@ if (WIN32)
   include_directories(windows)
 
   list(APPEND COMMON_RUNTIME_SOURCES
-    windows/PalRedhawkCommon.cpp
-    windows/PalRedhawkMinWin.cpp
+    windows/PalCommon.cpp
+    windows/PalMinWin.cpp
     ${GC_DIR}/windows/gcenv.windows.cpp
   )
 
@@ -165,10 +174,10 @@ else()
     # cgroups, NUMA, signal handlers and the subprocess crash dumper.
   else()
     list(APPEND COMMON_RUNTIME_SOURCES
-      unix/PalRedhawkUnix.cpp unix/PalCreateDump.cpp
+      unix/PalUnix.cpp unix/PalCreateDump.cpp
       ${GC_DIR}/unix/numasupport.cpp ${GC_DIR}/unix/cgroup.cpp ${GC_DIR}/unix/gcenv.unix.cpp)
     list(APPEND FULL_RUNTIME_SOURCES
-      unix/cgroupcpu.cpp unix/HardwareExceptions.cpp unix/UnixSignals.cpp unix/UnixContext.cpp)
+      unix/cgroupcpu.cpp unix/HardwareExceptions.cpp unix/UnixSignals.cpp unix/NativeContext.cpp)
   endif()
 
   include(${CLR_SRC_NATIVE_DIR}/external/llvm-libunwind.cmake)
@@ -204,16 +213,22 @@ if (CLR_CMAKE_TARGET_ARCH_AMD64)
 endif (CLR_CMAKE_TARGET_ARCH_AMD64)
 
 list(APPEND RUNTIME_SOURCES_ARCH_ASM
-  ${ARCH_SOURCES_DIR}/AllocFast.${ASM_SUFFIX}
+  ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/AllocFast.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/ExceptionHandling.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/GcProbe.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/MiscStubs.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/PInvoke.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/InteropThunksHelpers.${ASM_SUFFIX}
-  ${ARCH_SOURCES_DIR}/StubDispatch.${ASM_SUFFIX}
+  ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/StubDispatch.${ASM_SUFFIX}
   ${ARCH_SOURCES_DIR}/UniversalTransition.${ASM_SUFFIX}
-  ${ARCH_SOURCES_DIR}/WriteBarriers.${ASM_SUFFIX}
+  ${RUNTIME_DIR}/${ARCH_SOURCES_DIR}/WriteBarriers.${ASM_SUFFIX}
 )
+
+if (CLR_CMAKE_TARGET_ARCH_AMD64 OR CLR_CMAKE_TARGET_ARCH_ARM64)
+  list(APPEND RUNTIME_SOURCES_ARCH_ASM
+    ${ARCH_SOURCES_DIR}/CachedInterfaceDispatchAot.${ASM_SUFFIX}
+  )
+endif ()
 
 # Add architecture specific folder for looking up headers.
 convert_to_absolute_path(ARCH_SOURCES_DIR ${ARCH_SOURCES_DIR})
@@ -243,7 +258,7 @@ endif()
 
 add_definitions(-DFEATURE_BASICFREEZE)
 add_definitions(-DFEATURE_CONSERVATIVE_GC)
-if(CLR_CMAKE_TARGET_ARCH_AMD64 OR CLR_CMAKE_TARGET_ARCH_ARM64)
+if(CLR_CMAKE_TARGET_ARCH_AMD64 OR CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_RISCV64 OR CLR_CMAKE_TARGET_ARCH_LOONGARCH64)
   add_definitions(-DFEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP)
   add_definitions(-DFEATURE_MANUALLY_MANAGED_CARD_BUNDLES)
 endif()
@@ -281,7 +296,6 @@ else()
     add_definitions(-DFEATURE_READONLY_GS_COOKIE)
   endif()
   include(unix/configure.cmake)
-  include(${CLR_SRC_NATIVE_DIR}/minipal/configure.cmake)
   include_directories(${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
@@ -297,7 +311,7 @@ if (CLR_CMAKE_TARGET_UNIX)
 
 endif(CLR_CMAKE_TARGET_UNIX)
 
-set(RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(NATIVEAOT_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 list(APPEND COMMON_RUNTIME_SOURCES ${GC_HEADERS})
 

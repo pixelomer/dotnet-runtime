@@ -15,7 +15,8 @@ namespace System.Net.Security
 {
     public partial class SslStream
     {
-        private readonly SslAuthenticationOptions _sslAuthenticationOptions = new SslAuthenticationOptions();
+        internal readonly SslAuthenticationOptions _sslAuthenticationOptions = new SslAuthenticationOptions();
+        internal new Stream InnerStream => base.InnerStream;
         private NestedState _nestedAuth;
         private bool _isRenego;
 
@@ -295,6 +296,30 @@ namespace System.Net.Security
             }
             try
             {
+#if TARGET_APPLE
+                if (SslStreamPal.ShouldUseAsyncSecurityContext(_sslAuthenticationOptions))
+                {
+                    Debug.Assert(_sslAuthenticationOptions.IsClient);
+                    byte[]? dummy = null;
+                    AcquireClientCredentials(ref dummy, true);
+
+                    Task<Exception?> handshakeTask = SslStreamPal.AsyncHandshakeAsync(ref _securityContext, this, cancellationToken);
+                    await TIOAdapter.WaitAsync(handshakeTask).ConfigureAwait(false);
+                    if (await handshakeTask.ConfigureAwait(false) is Exception ex)
+                    {
+                        if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, ex, "Async handshake failed");
+                        if (ex is ArgumentException or IOException)
+                        {
+                            throw ex;
+                        }
+                        throw new AuthenticationException(SR.net_auth_SSPI, ex);
+                    }
+
+                    CompleteHandshake(_sslAuthenticationOptions);
+                    return;
+                }
+#endif // TARGET_APPLE
+
                 if (!receiveFirst)
                 {
                     token = NextMessage(reAuthenticationData, out int consumed);
@@ -392,6 +417,7 @@ namespace System.Net.Security
                 _localClientCertificateUsed = -1;
             }
 
+#pragma warning disable SYSLIB0058 // Use NegotiatedCipherSuite.
             if (NetEventSource.Log.IsEnabled())
                 NetEventSource.Log.SspiSelectedCipherSuite(nameof(ForceAuthenticationAsync),
                                                                     SslProtocol,
@@ -401,7 +427,7 @@ namespace System.Net.Security
                                                                     HashStrength,
                                                                     KeyExchangeAlgorithm,
                                                                     KeyExchangeStrength);
-
+#pragma warning restore SYSLIB0058 // Use NegotiatedCipherSuite.
         }
 
         // This method will make sure we have at least one full TLS frame buffered.
@@ -486,18 +512,23 @@ namespace System.Net.Security
         // Calls crypto on received data. No IO inside.
         private ProtocolToken ProcessTlsFrame(int frameSize)
         {
+            Debug.Assert(frameSize > 0);
+
             int chunkSize = frameSize;
 
             ReadOnlySpan<byte> availableData = _buffer.EncryptedReadOnlySpan;
 
             // Often more TLS messages fit into same packet. Get as many complete frames as we can.
-            while (_buffer.EncryptedLength - chunkSize > TlsFrameHelper.HeaderSize)
+            while (availableData.Length - chunkSize > TlsFrameHelper.HeaderSize)
             {
                 TlsFrameHeader nextHeader = default;
 
+                // we should always have at least TlsFrameHelper.HeaderSize bytes left, so
+                // if TryGetFrameHeader fails, it means the frame is malformed and we should not continue processing.
                 if (!TlsFrameHelper.TryGetFrameHeader(availableData.Slice(chunkSize), ref nextHeader))
                 {
-                    break;
+                    if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, "invalid TLS frame size");
+                    throw new AuthenticationException(SR.net_frame_read_size);
                 }
 
                 frameSize = nextHeader.Length;
@@ -510,6 +541,7 @@ namespace System.Net.Security
                     break;
                 }
 
+                Debug.Assert(frameSize > 0);
                 chunkSize += frameSize;
             }
 
@@ -819,7 +851,6 @@ namespace System.Net.Security
         private async ValueTask<int> ReadAsyncInternal<TIOAdapter>(Memory<byte> buffer, CancellationToken cancellationToken)
             where TIOAdapter : IReadWriteAdapter
         {
-
             // Throw first if we already have exception.
             // Check for disposal is not atomic so we will check again below.
             ThrowIfExceptionalOrNotAuthenticated();
@@ -832,6 +863,15 @@ namespace System.Net.Security
 
             try
             {
+
+#if TARGET_APPLE
+                if (SslStreamPal.IsAsyncSecurityContext(_securityContext!))
+                {
+                    ValueTask<int> task = SslStreamPal.AsyncReadAsync(_securityContext!, buffer, cancellationToken);
+                    return await TIOAdapter.WaitAsync(task).ConfigureAwait(false);
+                }
+#endif // TARGET_APPLE
+
                 int processedLength = 0;
                 int nextTlsFrameLength = UnknownTlsFrameLength;
 
@@ -973,6 +1013,15 @@ namespace System.Net.Security
 
             try
             {
+#if TARGET_APPLE
+                if (SslStreamPal.IsAsyncSecurityContext(_securityContext!))
+                {
+                    Task task = SslStreamPal.AsyncWriteAsync(_securityContext!, buffer, cancellationToken);
+                    await TIOAdapter.WaitAsync(task).ConfigureAwait(false);
+                    return;
+                }
+#endif // TARGET_APPLE
+
                 ValueTask t = buffer.Length < MaxDataSize ?
                     WriteSingleChunk<TIOAdapter>(buffer, cancellationToken) :
                     WriteAsyncChunked<TIOAdapter>(buffer, cancellationToken);
@@ -1016,11 +1065,6 @@ namespace System.Net.Security
             }
 
             if (!TlsFrameHelper.TryGetFrameHeader(buffer, ref _lastFrame.Header))
-            {
-                throw new IOException(SR.net_ssl_io_frame);
-            }
-
-            if (_lastFrame.Header.Length < 0)
             {
                 if (NetEventSource.Log.IsEnabled()) NetEventSource.Error(this, "invalid TLS frame size");
                 throw new AuthenticationException(SR.net_frame_read_size);

@@ -6,11 +6,10 @@
 #include "CommonTypes.h"
 #include "CommonMacros.h"
 #include "daccess.h"
-#include "PalRedhawkCommon.h"
-#include "PalRedhawk.h"
+#include "PalLimitedContext.h"
+#include "Pal.h"
 #include "rhassert.h"
 #include "slist.h"
-#include "varint.h"
 #include "regdisplay.h"
 #include "StackFrameIterator.h"
 #include "thread.h"
@@ -23,6 +22,8 @@
 #include "TargetPtrs.h"
 #include "yieldprocessornormalized.h"
 #include <minipal/time.h>
+#include <minipal/thread.h>
+#include "asyncsafethreadmap.h"
 
 #include "slist.inl"
 
@@ -86,11 +87,6 @@ ThreadStore * ThreadStore::Create(RuntimeInstance * pRuntimeInstance)
     if (NULL == pNewThreadStore)
         return NULL;
 
-#if defined(FEATURE_HIJACK) && !defined(TARGET_LIBNX)
-    if (!PalRegisterHijackCallback(Thread::HijackCallback))
-        return NULL;
-#endif
-
     pNewThreadStore->m_pRuntimeInstance = pRuntimeInstance;
 
     pNewThreadStore.SuppressRelease();
@@ -115,9 +111,16 @@ void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
     // we want to avoid at construction time because the loader lock is held then.
     Thread * pAttachingThread = RawGetCurrentThread();
 
-    // The thread was already initialized, so it is already attached
+    if (pAttachingThread->IsDetached())
+    {
+        ASSERT_UNCONDITIONALLY("Attempt to execute managed code after the .NET runtime thread state has been destroyed.");
+        RhFailFast();
+    }
+
+    // The thread was already initialized, so it is already attached.
     if (pAttachingThread->IsInitialized())
     {
+        ASSERT((pAttachingThread->m_ThreadStateFlags & Thread::TSF_Attached) != 0);
         return;
     }
 
@@ -142,6 +145,14 @@ void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
     pAttachingThread->m_ThreadStateFlags = Thread::TSF_Attached;
 
     pTS->m_ThreadList.PushHead(pAttachingThread);
+
+#if defined(TARGET_UNIX) && !defined(TARGET_WASM)
+    if (!InsertThreadIntoAsyncSafeMap(pAttachingThread->m_threadId, pAttachingThread))
+    {
+        PalPrintFatalError("\nFailed to insert thread into async-safe map due to out of memory.\n");
+        RhFailFast();
+    }
+#endif // TARGET_UNIX && !TARGET_WASM
 }
 
 // static
@@ -161,12 +172,12 @@ void ThreadStore::DetachCurrentThread()
         return;
     }
 
-    // Unregister from OS notifications
-    // This can return false if detach notification is spurious and does not belong to this thread.
-    if (!PalDetachThread(pDetachingThread))
-    {
-        return;
-    }
+#ifdef TARGET_LIBNX
+    if (!PalDetachThread(pDetachingThread)) return;
+#endif
+
+    // detach callback should not call us twice
+    ASSERT(!pDetachingThread->IsDetached());
 
     // Run pre-mortem callbacks while we still can run managed code and not holding locks.
     // NOTE: background GC threads are attached/suspendable threads, but should not run ordinary
@@ -191,6 +202,9 @@ void ThreadStore::DetachCurrentThread()
         pTS->m_ThreadList.RemoveFirst(pDetachingThread);
         // tidy up GC related stuff (release allocation context, etc..)
         pDetachingThread->Detach();
+#if defined(TARGET_UNIX) && !defined(TARGET_WASM)
+        RemoveThreadFromAsyncSafeMap(pDetachingThread->m_threadId, pDetachingThread);
+#endif
     }
 
     // post-mortem clean up.
@@ -306,7 +320,7 @@ void ThreadStore::SuspendAllThreads(bool waitForGCEvent)
         }
     }
 
-#if defined(TARGET_ARM) || defined(TARGET_ARM64)
+#if defined(TARGET_ARM) || defined(TARGET_ARM64) || defined(TARGET_LOONGARCH64)
     // Flush the store buffers on all CPUs, to ensure that all changes made so far are seen
     // by the GC threads. This only matters on weak memory ordered processors as
     // the strong memory ordered processors wouldn't have reordered the relevant writes.
@@ -314,7 +328,7 @@ void ThreadStore::SuspendAllThreads(bool waitForGCEvent)
     // left alone by suspension to flush their writes that they made before they switched to
     // preemptive mode.
     PalFlushProcessWriteBuffers();
-#endif //TARGET_ARM || TARGET_ARM64
+#endif //TARGET_ARM || TARGET_ARM64 || TARGET_LOONGARCH64
 }
 
 void ThreadStore::ResumeAllThreads(bool waitForGCEvent)
@@ -325,7 +339,7 @@ void ThreadStore::ResumeAllThreads(bool waitForGCEvent)
     }
     END_FOREACH_THREAD
 
-#if defined(TARGET_ARM) || defined(TARGET_ARM64)
+#if defined(TARGET_ARM) || defined(TARGET_ARM64) || defined(TARGET_LOONGARCH64)
         // Flush the store buffers on all CPUs, to ensure that they all see changes made
         // by the GC threads. This only matters on weak memory ordered processors as
         // the strong memory ordered processors wouldn't have reordered the relevant reads.
@@ -333,7 +347,7 @@ void ThreadStore::ResumeAllThreads(bool waitForGCEvent)
         // the runtime was suspended and that will return to cooperative mode after the runtime
         // is restarted.
         PalFlushProcessWriteBuffers();
-#endif //TARGET_ARM || TARGET_ARM64
+#endif //TARGET_ARM || TARGET_ARM64 || TARGET_LOONGARCH64
 
     RhpTrapThreads &= ~(uint32_t)TrapThreadsFlags::TrapThreads;
 
@@ -430,13 +444,20 @@ FCIMPLEND
 C_ASSERT(sizeof(Thread) == sizeof(RuntimeThreadLocals));
 
 #ifndef _MSC_VER
-__thread RuntimeThreadLocals tls_CurrentThread;
+PLATFORM_THREAD_LOCAL RuntimeThreadLocals tls_CurrentThread;
 #endif
 
 EXTERN_C RuntimeThreadLocals* RhpGetThread()
 {
     return &tls_CurrentThread;
 }
+
+#if defined(TARGET_UNIX) && !defined(TARGET_WASM)
+Thread * ThreadStore::GetCurrentThreadIfAvailableAsyncSafe()
+{
+    return (Thread*)FindThreadInAsyncSafeMap(minipal_get_current_thread_id_no_cache());
+}
+#endif // TARGET_UNIX && !TARGET_WASM
 
 #endif // !DACCESS_COMPILE
 

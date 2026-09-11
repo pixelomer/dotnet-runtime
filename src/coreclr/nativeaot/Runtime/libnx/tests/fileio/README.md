@@ -1,5 +1,9 @@
 # Horizon BCL positional I/O
 
+These build commands target the preserved .NET 9.0.3 runtime. Use the
+`horizon-net9-nativeaot` branch for this recipe; the
+[managed stress guide](../managed/README.md) describes the .NET 10 probe.
+
 The System.Native libnx adapter implements positional I/O using
 seek/read-or-write/restore under a shared position lock. Ordinary regular-file
 Read/Write, LSeek and Close use the same lock, including file descriptions shared

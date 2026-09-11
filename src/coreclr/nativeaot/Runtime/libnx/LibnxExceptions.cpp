@@ -1,6 +1,6 @@
 #include "common.h"
-#include "PalRedhawk.h"
-#include "UnixContext.h"
+#include "Pal.h"
+#include "NativeContext.h"
 #include "LibnxExceptions.h"
 #include "LibnxPlatform.h"
 #include <cstdlib>
@@ -34,7 +34,7 @@ bool InitializeHardwareExceptionHandling()
     // No POSIX signal installation or global exception stack is used.
     return true;
 }
-extern "C" void PalSetHardwareExceptionHandler(PHARDWARE_EXCEPTION_HANDLER handler)
+void PalSetHardwareExceptionHandler(PHARDWARE_EXCEPTION_HANDLER handler)
 {
     if (!handler || hardwareHandler) abort();
     hardwareHandler = handler;

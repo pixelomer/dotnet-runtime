@@ -21,6 +21,14 @@ namespace System.Runtime.InteropServices.JavaScript.Tests
         }
 
         [Fact]
+        public unsafe void PrototypeNotEqual()
+        {
+            using var temp1 = JSHost.GlobalThis.GetPropertyAsJSObject("EventTarget");
+            using var temp2 = JSHost.GlobalThis.GetPropertyAsJSObject("Window");
+            Assert.NotEqual(temp1, temp2);
+        }
+
+        [Fact]
         public async Task MultipleImportAsync()
         {
             var first = await JSHost.ImportAsync("JavaScriptTestHelper", "../JavaScriptTestHelper.mjs");
@@ -238,7 +246,7 @@ namespace System.Runtime.InteropServices.JavaScript.Tests
         [Fact]
         public unsafe void CreateFunctionInternal()
         {
-            Func<bool> internals = Utils.CreateFunctionBool("return true");
+            Func<bool> internals = Utils.CreateFunctionBool("return INTERNAL.mono_wasm_runtime_is_ready");
             Assert.True(internals());
         }
 

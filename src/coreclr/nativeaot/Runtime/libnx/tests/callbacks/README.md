@@ -1,5 +1,9 @@
 # NativeAOT delegate callback probe
 
+These build commands target the preserved .NET 9.0.3 runtime. Use the
+`horizon-net9-nativeaot` branch for this recipe; the
+[managed stress guide](../managed/README.md) describes the .NET 10 probe.
+
 Build the Horizon native runtime and BCL using the prerequisites and commands
 in the [managed stress guide](../managed/README.md). With `ICU_NX_INSTALL_DIR`
 exported, run from the repository root:

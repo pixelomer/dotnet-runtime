@@ -15,7 +15,7 @@ installation prefix, set `DEVKITA64=$DEVKITPRO/devkitA64`, and add
 `$DEVKITA64/bin` to `PATH`. Install the Microsoft
 .NET SDK version 10.0.111 for the standalone managed compilation; the runtime
 source build uses its own pinned SDK through `build.sh`. Restore downloads the
-pinned ILC and managed runtime 9.0.3 packages from NuGet.
+pinned ILC and managed runtime 10.0.12 packages from NuGet.
 
 Build the native subsets and matching managed SDK libraries from the runtime root:
 
@@ -41,8 +41,8 @@ replace libnx's default `-T` argument, preserving the other NRO link options.
 ICU needs libstdc++; do not also link libstdc++compat.a.
 
 Outputs are under `artifacts/libnx-managed-stress/`, including
-`nativeaot-managed-stress.nro`, its ELF and map. The program writes
-`sdmc:/switch/nativeaot-managed-stress.txt`; preserve any existing file before
+`nativeaot10-managed-stress.nro`, its ELF and map. The program writes
+`sdmc:/switch/nativeaot10-managed-stress.txt`; preserve any existing file before
 running it. Use full application memory. No game data is required.
 
 ## Runtime lifetime
@@ -65,6 +65,8 @@ Primary platform references:
 [pthread join/unsupported detach](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/runtime/newlib.c),
 [application exit mode](https://github.com/switchbrew/libnx/blob/v4.12.0/nx/source/services/applet.c).
 
-The probe requires the five source-built Horizon aotsdk DLLs and passes their
+The probe requires the four source-built Horizon aotsdk DLLs and passes their
 directory to ILC with `IlcSdkPath`; see the [managed library guide](../../MANAGED_LIBRARIES.md).
-The shared allocator accounts for both BCL frozen objects and GC mappings.
+The .NET 10 link includes `libaotminipal.a`; there is no separate
+DisabledReflection SDK DLL. The shared allocator accounts for both BCL frozen
+objects and GC mappings.

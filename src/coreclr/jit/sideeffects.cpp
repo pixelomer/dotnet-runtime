@@ -318,6 +318,19 @@ void AliasSet::AddNode(Compiler* compiler, GenTree* node)
     if (nodeInfo.IsLclVarWrite())
     {
         m_lclVarWrites.Add(compiler, nodeInfo.LclNum());
+
+        LclVarDsc* dsc = compiler->lvaGetDesc(nodeInfo.LclNum());
+        if (dsc->lvIsStructField)
+        {
+            m_lclVarWrites.Add(compiler, dsc->lvParentLcl);
+        }
+        else if (dsc->lvPromoted)
+        {
+            for (unsigned i = 0; i < dsc->lvFieldCnt; i++)
+            {
+                m_lclVarWrites.Add(compiler, dsc->lvFieldLclStart + i);
+            }
+        }
     }
 }
 
@@ -594,6 +607,186 @@ bool SideEffectSet::InterferesWith(const SideEffectSet& other, bool strict) cons
 bool SideEffectSet::InterferesWith(Compiler* compiler, GenTree* node, bool strict) const
 {
     return InterferesWith(node->OperEffects(compiler), AliasSet::NodeInfo(compiler, node), strict);
+}
+
+//------------------------------------------------------------------------
+// SideEffectSet::IsLirInvariantInRange: Check if a node is invariant in the
+//    specified range. In other words, can 'node' be moved to right before
+//    'endExclusive' without its computation changing values?
+//
+// Arguments:
+//    comp         - The compiler
+//    node         - The node.
+//    endExclusive - The exclusive end of the range to check invariance for.
+//
+// Returns:
+//    True if 'node' can be evaluated at any point between its current
+//    location and 'endExclusive' without giving a different result; otherwise
+//    false.
+//
+// Remarks:
+//    This presumes we are operating on nodes that are in LIR form
+//
+bool SideEffectSet::IsLirInvariantInRange(Compiler* comp, GenTree* node, GenTree* endExclusive)
+{
+    assert((node != nullptr) && (endExclusive != nullptr));
+
+    // Quick early-out for unary cases
+    //
+    if (node->gtNext == endExclusive)
+    {
+        return true;
+    }
+
+    if (node->OperConsumesFlags())
+    {
+        return false;
+    }
+
+    Clear();
+    AddNode(comp, node);
+
+    for (GenTree* cur = node->gtNext; cur != endExclusive; cur = cur->gtNext)
+    {
+        assert((cur != nullptr) && "Expected first node to precede end node");
+        const bool strict = true;
+        if (InterferesWith(comp, cur, strict))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+//------------------------------------------------------------------------
+// SideEffectSet::IsLirInvariantInRange: Check if a node is invariant in the
+//    specified range, ignoring conflicts with one particular node.
+//
+// Arguments:
+//    comp         - The compiler
+//    node         - The node.
+//    endExclusive - The exclusive end of the range to check invariance for.
+//    ignoreNode   - A node to ignore interference checks with, for example
+//                   because it will retain its relative order with 'node'.
+//
+// Returns:
+//    True if 'node' can be evaluated at any point between its current location
+//    and 'endExclusive' without giving a different result; otherwise false.
+//
+// Remarks:
+//    This presumes we are operating on nodes that are in LIR form
+//
+bool SideEffectSet::IsLirInvariantInRange(Compiler* comp, GenTree* node, GenTree* endExclusive, GenTree* ignoreNode)
+{
+    assert((node != nullptr) && (endExclusive != nullptr));
+
+    if (ignoreNode == nullptr)
+    {
+        return IsLirInvariantInRange(comp, node, endExclusive);
+    }
+
+    if ((node->gtNext == endExclusive) || ((node->gtNext == ignoreNode) && (node->gtNext->gtNext == endExclusive)))
+    {
+        return true;
+    }
+
+    if (node->OperConsumesFlags())
+    {
+        return false;
+    }
+
+    Clear();
+    AddNode(comp, node);
+
+    for (GenTree* cur = node->gtNext; cur != endExclusive; cur = cur->gtNext)
+    {
+        assert((cur != nullptr) && "Expected first node to precede end node");
+        if (cur == ignoreNode)
+        {
+            continue;
+        }
+
+        const bool strict = true;
+        if (InterferesWith(comp, cur, strict))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+//------------------------------------------------------------------------
+// SideEffectSet::IsLirRangeInvariantInRange: Check if a range of nodes are
+//    invariant in the specified range.
+//
+// Arguments:
+//    comp         - The compiler
+//    rangeStart   - The first node.
+//    rangeEnd     - The last node.
+//    endExclusive - The exclusive end of the range to check invariance for.
+//    ignoreNode   - A node to ignore interference checks with, for example
+//                   because it will retain its relative order with 'node'.
+//
+// Returns:
+//    True if the range can be evaluated at any point between its current location
+//    and 'endExclusive' without giving a different result; otherwise false.
+//
+// Remarks:
+//    This presumes we are operating on nodes that are in LIR form
+//
+//    Note that the range is treated as a unit and no pairwise interference
+//    checks between nodes in the range are performed.
+//
+bool SideEffectSet::IsLirRangeInvariantInRange(
+    Compiler* comp, GenTree* rangeStart, GenTree* rangeEnd, GenTree* endExclusive, GenTree* ignoreNode)
+{
+    assert((rangeStart != nullptr) && (rangeEnd != nullptr));
+
+    if ((rangeEnd->gtNext == endExclusive) ||
+        ((ignoreNode != nullptr) && (rangeEnd->gtNext == ignoreNode) && (rangeEnd->gtNext->gtNext == endExclusive)))
+    {
+        return true;
+    }
+
+    if (rangeStart->OperConsumesFlags())
+    {
+        return false;
+    }
+
+    Clear();
+    GenTree* cur = rangeStart;
+
+    while (true)
+    {
+        AddNode(comp, cur);
+
+        if (cur == rangeEnd)
+        {
+            break;
+        }
+
+        cur = cur->gtNext;
+        assert((cur != nullptr) && "Expected rangeStart to precede rangeEnd");
+    }
+
+    for (GenTree* cur = rangeEnd->gtNext; cur != endExclusive; cur = cur->gtNext)
+    {
+        assert((cur != nullptr) && "Expected first node to precede end node");
+        if (cur == ignoreNode)
+        {
+            continue;
+        }
+
+        const bool strict = true;
+        if (InterferesWith(comp, cur, strict))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 //------------------------------------------------------------------------

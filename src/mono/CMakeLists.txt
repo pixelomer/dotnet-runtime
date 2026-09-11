@@ -130,15 +130,9 @@ if(NOT AOT_TARGET_TRIPLE STREQUAL "")
   if(AOT_TARGET_TRIPLE STREQUAL "x86_64-apple-darwin10")
     set(TARGET_SYSTEM_NAME "ios")
     set(TARGET_ARCH "x86_64")
-  elseif(AOT_TARGET_TRIPLE STREQUAL "i386-apple-darwin10")
-    set(TARGET_SYSTEM_NAME "ios")
-    set(TARGET_ARCH "x86")
   elseif(AOT_TARGET_TRIPLE STREQUAL "aarch64-apple-darwin10")
     set(TARGET_SYSTEM_NAME "ios")
     set(TARGET_ARCH "arm64")
-  elseif(AOT_TARGET_TRIPLE STREQUAL "arm-apple-darwin10")
-    set(TARGET_SYSTEM_NAME "ios")
-    set(TARGET_ARCH "arm")
   elseif(AOT_TARGET_TRIPLE STREQUAL "x86_64-apple-maccatalyst")
     set(TARGET_SYSTEM_NAME "darwin")
     set(TARGET_ARCH "x86_64")
@@ -255,9 +249,8 @@ elseif(CLR_CMAKE_HOST_OS STREQUAL "emscripten")
   set(HAVE_SYS_RANDOM_H 1)
 elseif(CLR_CMAKE_HOST_OS STREQUAL "wasi")
   set(HOST_WASI 1)
-  add_definitions(-D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_MMAN -DHOST_WASI)
+  add_definitions(-D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PTHREAD -DHOST_WASI)
   add_definitions(-D_THREAD_SAFE)
-  add_definitions(-DDISABLE_SOCKET_TRANSPORT)
   add_definitions(-DDISABLE_EGD_SOCKET)
   add_definitions(-DDISABLE_EVENTPIPE)
   add_compile_options(-Wno-strict-prototypes)
@@ -566,8 +559,12 @@ if(GCC)
 
   # The runtime code does not respect ANSI C strict aliasing rules
   append("-fno-strict-aliasing" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
-  # We rely on signed overflow to behave
-  append("-fwrapv" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+
+  # Make signed overflow well-defined. Implies the following flags in clang-20 and above.
+  # -fwrapv - Make signed arithmetic overflow of addition, subtraction, and multiplication wrap around
+  # using twos-complement representation (this is normally undefined according to the C++ spec).
+  # -fwrapv-pointer - The same as -fwrapv but for pointers.
+  append("-fno-strict-overflow" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
 
   set(WARNINGS "-Wall -Wunused -Wmissing-declarations -Wpointer-arith -Wno-cast-qual -Wwrite-strings -Wno-switch -Wno-switch-enum -Wno-unused-value -Wno-attributes -Wno-format-zero-length -Wno-unused-function")
   set(WARNINGS_C "-Wmissing-prototypes -Wstrict-prototypes -Wnested-externs")
@@ -577,6 +574,27 @@ if(GCC)
 
   if (CMAKE_C_COMPILER_ID MATCHES "Clang")
     set(WARNINGS "${WARNINGS} -Qunused-arguments -Wno-tautological-compare -Wno-parentheses-equality -Wno-self-assign -Wno-return-stack-address -Wno-constant-logical-operand -Wno-zero-length-array -Wno-asm-operand-widths")
+  endif()
+
+  if (HOST_MACCAT)
+    # Somewhere between CMake 3.17 and 3.19.4, it became impossible to not pass
+    # a value for mmacosx-version-min (blank CMAKE_OSX_DEPLOYMENT_TARGET gets
+    # replaced with a default value, and always gets expanded to an OS version.
+    # https://gitlab.kitware.com/cmake/cmake/-/issues/20132
+    # We need to disable the warning that -target replaces -mmacosx-version-min
+    #
+    # With https://github.com/llvm/llvm-project/commit/1c66d08b0137cef7761b8220d3b7cb7833f57cdb clang renamed the option so we need to check for both
+    check_c_compiler_flag("-Wno-overriding-option" COMPILER_SUPPORTS_W_NO_OVERRIDING_OPTION)
+    if (COMPILER_SUPPORTS_W_NO_OVERRIDING_OPTION)
+      set(WARNINGS "${WARNINGS} -Wno-overriding-option")
+    else()
+      check_c_compiler_flag("-Wno-overriding-t-option" COMPILER_SUPPORTS_W_NO_OVERRIDING_T_OPTION)
+      if (COMPILER_SUPPORTS_W_NO_OVERRIDING_T_OPTION)
+        set(WARNINGS "${WARNINGS} -Wno-overriding-t-option")
+      else()
+        message(FATAL_ERROR "Compiler does not support -Wno-overriding-option or -Wno-overriding-t-option, needed for Mac Catalyst builds.")
+      endif()
+    endif()
   endif()
 
   check_c_compiler_flag("-Werror=incompatible-pointer-types" WERROR_INCOMPATIBLE_POINTER_TYPES)
@@ -592,7 +610,7 @@ if(GCC)
 
   if(HOST_WASI)
     # When building under WASI SDK, it's stricter about discarding 'const' qualifiers, causing some existing
-    # code (e.g., mono-rand.c:315) to be rejected
+    # code to be rejected
     set(WERROR_C "${WERROR_C} -Wno-incompatible-pointer-types-discards-qualifiers")
   endif()
 

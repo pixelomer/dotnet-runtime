@@ -8,16 +8,14 @@ using System.Reflection;
 
 namespace System.Text.Json.Serialization.Metadata
 {
+    [RequiresDynamicCode(JsonSerializer.SerializationRequiresDynamicCodeMessage)]
+    [RequiresUnreferencedCode(JsonSerializer.SerializationRequiresDynamicCodeMessage)]
     internal sealed class ReflectionMemberAccessor : MemberAccessor
     {
-        [RequiresDynamicCode(JsonSerializer.SerializationRequiresDynamicCodeMessage)]
-        [RequiresUnreferencedCode(JsonSerializer.SerializationRequiresDynamicCodeMessage)]
         public ReflectionMemberAccessor()
         {
         }
 
-        [UnconditionalSuppressMessage("Trimming", "IL2067:Target parameter argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The parameter of method does not have matching annotations.",
-            Justification = "The constructor has been marked RequiresUnreferencedCode")]
         public override Func<object>? CreateParameterlessConstructor(Type type, ConstructorInfo? ctorInfo)
         {
             Debug.Assert(type != null);
@@ -114,6 +112,10 @@ namespace System.Text.Json.Serialization.Metadata
             };
         }
 
+#if !NET9_0_OR_GREATER
+        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2046",
+            Justification = "The type is annotated with RequiresUnreferencedCode, so the trimmer will warn at construction time.")]
+#endif
         public override Action<TCollection, object?> CreateAddMethodDelegate<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] TCollection>()
         {
             Type collectionType = typeof(TCollection);
@@ -128,10 +130,6 @@ namespace System.Text.Json.Serialization.Metadata
             };
         }
 
-        [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
-            Justification = "The constructor has been marked RequiresUnreferencedCode")]
-        [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.",
-            Justification = "The constructor has been marked RequiresDynamicCode")]
         public override Func<IEnumerable<TElement>, TCollection> CreateImmutableEnumerableCreateRangeDelegate<TCollection, TElement>()
         {
             MethodInfo createRange = typeof(TCollection).GetImmutableEnumerableCreateRangeMethod(typeof(TElement));
@@ -139,10 +137,6 @@ namespace System.Text.Json.Serialization.Metadata
                 typeof(Func<IEnumerable<TElement>, TCollection>));
         }
 
-        [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
-            Justification = "The constructor has been marked RequiresUnreferencedCode")]
-        [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.",
-            Justification = "The constructor has been marked RequiresDynamicCode")]
         public override Func<IEnumerable<KeyValuePair<TKey, TValue>>, TCollection> CreateImmutableDictionaryCreateRangeDelegate<TCollection, TKey, TValue>()
         {
             MethodInfo createRange = typeof(TCollection).GetImmutableDictionaryCreateRangeMethod(typeof(TKey), typeof(TValue));

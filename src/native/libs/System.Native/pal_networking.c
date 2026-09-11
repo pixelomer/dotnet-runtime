@@ -34,7 +34,9 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#if HAVE_NET_IF_H
 #include <net/if.h>
+#endif
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -54,7 +56,9 @@
 #include <stdio.h>
 #endif
 #include <unistd.h>
+#ifdef HAVE_PWD_H
 #include <pwd.h>
+#endif
 #if HAVE_SENDFILE_4
 #include <sys/sendfile.h>
 #elif HAVE_SENDFILE_6
@@ -143,14 +147,11 @@ struct in_pktinfo
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
 
-enum
-{
-#if defined(__APPLE__) && __APPLE__
-    LINGER_OPTION_NAME = SO_LINGER_SEC
-#else
-    LINGER_OPTION_NAME = SO_LINGER,
+#if defined(__APPLE__) && __APPLE__ && defined(SO_LINGER_SEC)
+    #define LINGER_OPTION_NAME SO_LINGER_SEC
+#elif defined(SO_LINGER)
+    #define LINGER_OPTION_NAME SO_LINGER
 #endif
-};
 
 enum
 {
@@ -275,16 +276,17 @@ static void ConvertByteArrayToSockAddrIn6(struct sockaddr_in6* addr, const uint8
     addr->sin6_family = AF_INET6;
 }
 
-static void ConvertByteArrayToInAddr(struct in_addr* addr, const uint8_t* buffer, int32_t bufferLength)
-{
-    assert(bufferLength == NUM_BYTES_IN_IPV4_ADDRESS);
-    memcpy_s(&addr->s_addr, NUM_BYTES_IN_IPV4_ADDRESS, buffer, (uint32_t)bufferLength); // Send back in network byte order.
-}
-
 static void ConvertInAddrToByteArray(uint8_t* buffer, int32_t bufferLength, const struct in_addr* addr)
 {
     assert(bufferLength == NUM_BYTES_IN_IPV4_ADDRESS);
     memcpy_s(buffer, (uint32_t)bufferLength, &addr->s_addr, NUM_BYTES_IN_IPV4_ADDRESS); // Send back in network byte order.
+}
+
+#if HAVE_GETNAMEINFO
+static void ConvertByteArrayToInAddr(struct in_addr* addr, const uint8_t* buffer, int32_t bufferLength)
+{
+    assert(bufferLength == NUM_BYTES_IN_IPV4_ADDRESS);
+    memcpy_s(&addr->s_addr, NUM_BYTES_IN_IPV4_ADDRESS, buffer, (uint32_t)bufferLength); // Send back in network byte order.
 }
 
 static void ConvertByteArrayToSockAddrIn(struct sockaddr_in* addr, const uint8_t* buffer, int32_t bufferLength)
@@ -293,6 +295,7 @@ static void ConvertByteArrayToSockAddrIn(struct sockaddr_in* addr, const uint8_t
 
     addr->sin_family = AF_INET;
 }
+#endif // HAVE_GETNAMEINFO
 
 static int32_t ConvertGetAddrInfoAndGetNameInfoErrorsToPal(int32_t error)
 {
@@ -317,10 +320,12 @@ static int32_t ConvertGetAddrInfoAndGetNameInfoErrorsToPal(int32_t error)
         case EAI_NODATA:
 #endif
             return GetAddrInfoErrorFlags_EAI_NONAME;
+        case EAI_SYSTEM:
+            return GetAddrInfoErrorFlags_EAI_SYSTEM;
+        default:
+            assert_err(0, "Unknown AddrInfo error flag", error);
+            return -1;
     }
-
-    assert_err(0, "Unknown AddrInfo error flag", error);
-    return -1;
 }
 
 static int32_t CopySockAddrToIPAddress(sockaddr* addr, sa_family_t family, IPAddress* ipAddress)
@@ -550,6 +555,7 @@ typedef int32_t NativeFlagsType;
 typedef uint32_t NativeFlagsType;
 #endif
 
+#if HAVE_GETNAMEINFO
 static inline NativeFlagsType ConvertGetNameInfoFlagsToNative(int32_t flags)
 {
     NativeFlagsType outFlags = 0;
@@ -564,6 +570,7 @@ static inline NativeFlagsType ConvertGetNameInfoFlagsToNative(int32_t flags)
 
     return outFlags;
 }
+#endif // HAVE_GETNAMEINFO
 
 int32_t SystemNative_GetNameInfo(const uint8_t* address,
                                  int32_t addressLength,
@@ -574,6 +581,7 @@ int32_t SystemNative_GetNameInfo(const uint8_t* address,
                                  int32_t serviceLength,
                                  int32_t flags)
 {
+#if HAVE_GETNAMEINFO
     assert(address != NULL);
     assert(addressLength > 0);
     assert((host != NULL) || (service != NULL));
@@ -610,6 +618,17 @@ int32_t SystemNative_GetNameInfo(const uint8_t* address,
     }
 
     return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
+#else // HAVE_GETNAMEINFO
+    (void)address;
+    (void)addressLength,
+    (void)isIPv6,
+    (void)host,
+    (void)hostLength,
+    (void)service,
+    (void)serviceLength,
+    (void)flags;
+    return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(EAI_FAIL);
+#endif // HAVE_GETNAMEINFO
 }
 
 int32_t SystemNative_GetDomainName(uint8_t* name, int32_t nameLength)
@@ -647,6 +666,11 @@ int32_t SystemNative_GetDomainName(uint8_t* name, int32_t nameLength)
     // Copy the domain name
     SafeStringCopy((char*)name, namelen, uts.domainname);
     return 0;
+#elif defined(__HAIKU__)
+    // Haiku does not support NIS domains.
+    (void)nameLength;
+    *name = '\0';
+    return 0;
 #elif TARGET_LIBNX
     // On libnx, there's no getdomainname but we can use the host name from the socket
     return SystemNative_GetHostName(name, nameLength);
@@ -659,11 +683,17 @@ int32_t SystemNative_GetDomainName(uint8_t* name, int32_t nameLength)
 
 int32_t SystemNative_GetHostName(uint8_t* name, int32_t nameLength)
 {
+#if HAVE_GETHOSTNAME
     assert(name != NULL);
     assert(nameLength > 0);
 
     size_t unsignedSize = (uint32_t)nameLength;
     return gethostname((char*)name, unsignedSize);
+#else // HAVE_GETHOSTNAME
+    (void)name;
+    (void)nameLength;
+    return Error_ENOTSUP;
+#endif // HAVE_GETHOSTNAME
 }
 
 static bool IsInBounds(const void* void_baseAddr, size_t len, const void* void_valueAddr, size_t valueSize)
@@ -923,6 +953,7 @@ SystemNative_SetIPv6Address(uint8_t* socketAddress, int32_t socketAddressLen, ui
 #endif
 }
 
+#if defined(CMSG_SPACE)
 static int8_t IsStreamSocket(int socket)
 {
     int type;
@@ -949,12 +980,14 @@ static void ConvertMessageHeaderToMsghdr(struct msghdr* header, const MessageHea
     header->msg_controllen = (uint32_t)messageHeader->ControlBufferLen;
     header->msg_flags = 0;
 }
+#endif // CMSG_SPACE
 
 int32_t SystemNative_GetControlMessageBufferSize(int32_t isIPv4, int32_t isIPv6)
 {
     // Note: it is possible that the address family of the socket is neither
     //       AF_INET nor AF_INET6. In this case both inputs will be 0 and
     //       the control message buffer size should be zero.
+#if defined(CMSG_SPACE)
     int32_t total = 0;
     if (isIPv4 != 0)
         total += CMSG_SPACE(sizeof(struct in_pktinfo));
@@ -965,8 +998,14 @@ int32_t SystemNative_GetControlMessageBufferSize(int32_t isIPv4, int32_t isIPv6)
 #endif 
 
     return total;
+#else
+    (void)isIPv4;
+    (void)isIPv6;
+    return 0;
+#endif
 }
 
+#if defined(CMSG_SPACE)
 static int32_t GetIPv4PacketInformation(struct cmsghdr* controlMessage, IPPacketInformation* packetInfo)
 {
     assert(controlMessage != NULL);
@@ -1091,6 +1130,34 @@ SystemNative_TryGetIPPacketInformation(MessageHeader* messageHeader, int32_t isI
 
     return 0;
 }
+#else // !CMSG_SPACE
+int32_t
+SystemNative_TryGetIPPacketInformation(MessageHeader* messageHeader, int32_t isIPv4, IPPacketInformation* packetInfo)
+{
+    if (messageHeader == NULL || packetInfo == NULL)
+    {
+        return 0;
+    }
+
+    if (isIPv4 != 0)
+    {
+        struct sockaddr_in* inetSockAddr = (struct sockaddr_in*)messageHeader->SocketAddress;
+
+        ConvertInAddrToByteArray(&packetInfo->Address.Address[0], NUM_BYTES_IN_IPV4_ADDRESS, &inetSockAddr->sin_addr);
+        packetInfo->Address.IsIPv6 = 0;
+    }
+    else
+    {
+        struct sockaddr_in6* inet6SockAddr = (struct sockaddr_in6*)messageHeader->SocketAddress;
+
+        ConvertIn6AddrToByteArray(&packetInfo->Address.Address[0], NUM_BYTES_IN_IPV6_ADDRESS, &inet6SockAddr->sin6_addr);
+        packetInfo->Address.IsIPv6 = 1;
+        packetInfo->Address.ScopeId = inet6SockAddr->sin6_scope_id;
+    }
+    packetInfo->InterfaceIndex = 0;
+    return 1;
+}
+#endif // !CMSG_SPACE
 
 static int8_t GetMulticastOptionName(int32_t multicastOption, int8_t isIPv6, int* optionName)
 {
@@ -1152,6 +1219,7 @@ int32_t SystemNative_GetIPv4MulticastOption(intptr_t socket, int32_t multicastOp
     return Error_SUCCESS;
 }
 
+
 int32_t SystemNative_SetIPv4MulticastOption(intptr_t socket, int32_t multicastOption, IPv4MulticastOption* option)
 {
     if (option == NULL)
@@ -1166,6 +1234,16 @@ int32_t SystemNative_SetIPv4MulticastOption(intptr_t socket, int32_t multicastOp
     {
         return Error_EINVAL;
     }
+
+#if HAVE_IP_MULTICAST_IFINDEX
+    // Use IP_MULTICAST_IFINDEX when available for interface index specification
+    if (optionName == SocketOptionName_SO_IP_MULTICAST_IF)
+    {
+        uint32_t ifindex = (uint32_t)option->InterfaceIndex;
+        int err = setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IFINDEX, &ifindex, sizeof(ifindex));
+        return err == 0 ? Error_SUCCESS : SystemNative_ConvertErrorPlatformToPal(errno);
+    }
+#endif
 
 #if HAVE_IP_MREQN
     struct ip_mreqn opt;
@@ -1298,6 +1376,7 @@ int32_t SystemNative_GetLingerOption(intptr_t socket, LingerOption* option)
         return Error_EFAULT;
     }
 
+#if defined(LINGER_OPTION_NAME)
     int fd = ToFileDescriptor(socket);
 
     struct linger opt;
@@ -1312,6 +1391,11 @@ int32_t SystemNative_GetLingerOption(intptr_t socket, LingerOption* option)
     option->OnOff = opt.l_onoff;
     option->Seconds = opt.l_linger;
     return Error_SUCCESS;
+#else // LINGER_OPTION_NAME
+    (void)socket;
+    (void)option;
+    return Error_ENOTSUP;
+#endif // LINGER_OPTION_NAME
 }
 
 int32_t SystemNative_SetLingerOption(intptr_t socket, LingerOption* option)
@@ -1326,6 +1410,7 @@ int32_t SystemNative_SetLingerOption(intptr_t socket, LingerOption* option)
         return Error_EINVAL;
     }
 
+#if defined(LINGER_OPTION_NAME)
     int fd = ToFileDescriptor(socket);
 
     struct linger opt;
@@ -1345,6 +1430,9 @@ int32_t SystemNative_SetLingerOption(intptr_t socket, LingerOption* option)
 #endif
 
     return err == 0 ? Error_SUCCESS : SystemNative_ConvertErrorPlatformToPal(errno);
+#else // LINGER_OPTION_NAME
+    return Error_ENOTSUP;
+#endif // LINGER_OPTION_NAME
 }
 
 static int32_t SetTimeoutOption(int32_t socket, int32_t millisecondsTimeout, int optionName)
@@ -1374,32 +1462,62 @@ int32_t SystemNative_SetSendTimeout(intptr_t socket, int32_t millisecondsTimeout
 
 static int8_t ConvertSocketFlagsPalToPlatform(int32_t palFlags, int* platformFlags)
 {
-    const int32_t SupportedFlagsMask =
+    const int32_t SupportedFlagsMask = 0
 #ifdef MSG_ERRQUEUE
-                        SocketFlags_MSG_ERRQUEUE |
+                        | SocketFlags_MSG_ERRQUEUE
 #endif
-                        SocketFlags_MSG_OOB | SocketFlags_MSG_PEEK | SocketFlags_MSG_DONTROUTE | SocketFlags_MSG_TRUNC | SocketFlags_MSG_CTRUNC | SocketFlags_MSG_DONTWAIT;
+#ifdef MSG_OOB
+                        | SocketFlags_MSG_OOB
+#endif
+#ifdef MSG_PEEK
+                        | SocketFlags_MSG_PEEK
+#endif
+#ifdef MSG_DONTWAIT
+                        | SocketFlags_MSG_DONTWAIT
+#endif
+#ifdef MSG_DONTROUTE
+                        | SocketFlags_MSG_DONTROUTE
+#endif
+#ifdef MSG_TRUNC
+                        | SocketFlags_MSG_TRUNC
+#endif
+#ifdef MSG_CTRUNC
+                        | SocketFlags_MSG_CTRUNC
+#endif
+                        ;
 
     if ((palFlags & ~SupportedFlagsMask) != 0)
     {
         return false;
     }
 
-    *platformFlags = ((palFlags & SocketFlags_MSG_OOB) == 0 ? 0 : MSG_OOB) |
-                     ((palFlags & SocketFlags_MSG_PEEK) == 0 ? 0 : MSG_PEEK) |
-                     ((palFlags & SocketFlags_MSG_DONTROUTE) == 0 ? 0 : MSG_DONTROUTE) |
-                     ((palFlags & SocketFlags_MSG_DONTWAIT) == 0 ? 0 : MSG_DONTWAIT) |
-                     ((palFlags & SocketFlags_MSG_TRUNC) == 0 ? 0 : MSG_TRUNC) |
-                     ((palFlags & SocketFlags_MSG_CTRUNC) == 0 ? 0 : MSG_CTRUNC);
+    *platformFlags = 0
 #ifdef MSG_ERRQUEUE
-    if ((palFlags & SocketFlags_MSG_ERRQUEUE) != 0)
-    {
-        *platformFlags |= MSG_ERRQUEUE;
-    }
+                    | ((palFlags & SocketFlags_MSG_ERRQUEUE) == 0 ? 0 : MSG_ERRQUEUE)
 #endif
+#ifdef MSG_OOB
+                    | ((palFlags & SocketFlags_MSG_OOB) == 0 ? 0 : MSG_OOB)
+#endif
+#ifdef MSG_PEEK
+                    | ((palFlags & SocketFlags_MSG_PEEK) == 0 ? 0 : MSG_PEEK)
+#endif
+#ifdef MSG_DONTROUTE
+                    | ((palFlags & SocketFlags_MSG_DONTROUTE) == 0 ? 0 : MSG_DONTROUTE)
+#endif
+#ifdef MSG_DONTWAIT
+                    | ((palFlags & SocketFlags_MSG_DONTWAIT) == 0 ? 0 : MSG_DONTWAIT)
+#endif
+#ifdef MSG_TRUNC
+                    | ((palFlags & SocketFlags_MSG_TRUNC) == 0 ? 0 : MSG_TRUNC)
+#endif
+#ifdef MSG_CTRUNC
+                    | ((palFlags & SocketFlags_MSG_CTRUNC) == 0 ? 0 : MSG_CTRUNC)
+#endif
+                    ;
     return true;
 }
 
+#if defined(CMSG_SPACE)
 static int32_t ConvertSocketFlagsPlatformToPal(int platformFlags)
 {
     const int SupportedFlagsMask = MSG_OOB | MSG_DONTROUTE | MSG_TRUNC | MSG_CTRUNC;
@@ -1411,6 +1529,7 @@ static int32_t ConvertSocketFlagsPlatformToPal(int platformFlags)
            ((platformFlags & MSG_TRUNC) == 0 ? 0 : SocketFlags_MSG_TRUNC) |
            ((platformFlags & MSG_CTRUNC) == 0 ? 0 : SocketFlags_MSG_CTRUNC);
 }
+#endif // CMSG_SPACE
 
 int32_t SystemNative_Receive(intptr_t socket, void* buffer, int32_t bufferLen, int32_t flags, int32_t* received)
 {
@@ -1510,10 +1629,15 @@ int32_t SystemNative_ReceiveMessage(intptr_t socket, MessageHeader* messageHeade
         return Error_ENOTSUP;
     }
 
+    ssize_t res;
+#if !defined(CMSG_SPACE)
+    // we will only use 0th buffer
+    struct iovec* msg_iov = (struct iovec*)messageHeader->IOVectors;
+    while ((res = recvfrom(fd, msg_iov[0].iov_base, msg_iov[0].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t*) &(messageHeader->SocketAddressLen))) < 0 && errno == EINTR);
+#else // CMSG_SPACE
     struct msghdr header;
     ConvertMessageHeaderToMsghdr(&header, messageHeader, fd);
 
-    ssize_t res;
     while ((res = recvmsg(fd, &header, socketFlags)) < 0 && errno == EINTR);
 
     assert(header.msg_name == messageHeader->SocketAddress); // should still be the same location as set in ConvertMessageHeaderToMsghdr
@@ -1526,6 +1650,7 @@ int32_t SystemNative_ReceiveMessage(intptr_t socket, MessageHeader* messageHeade
     messageHeader->ControlBufferLen = Min((int32_t)header.msg_controllen, messageHeader->ControlBufferLen);
 
     messageHeader->Flags = ConvertSocketFlagsPlatformToPal(header.msg_flags);
+#endif // CMSG_SPACE
 
     if (res != -1)
     {
@@ -1588,10 +1713,11 @@ int32_t SystemNative_SendMessage(intptr_t socket, MessageHeader* messageHeader, 
         return Error_ENOTSUP;
     }
 
+    ssize_t res;
+#if defined(CMSG_SPACE)
     struct msghdr header;
     ConvertMessageHeaderToMsghdr(&header, messageHeader, fd);
 
-    ssize_t res;
 #if defined(__APPLE__) && __APPLE__
     // possible OSX kernel bug: https://github.com/dotnet/runtime/issues/27221
     // According to https://github.com/dotnet/runtime/issues/63291 the EPROTOTYPE may be
@@ -1601,6 +1727,11 @@ int32_t SystemNative_SendMessage(intptr_t socket, MessageHeader* messageHeader, 
 #else
     while ((res = sendmsg(fd, &header, socketFlags)) < 0 && errno == EINTR);
 #endif
+#else // CMSG_SPACE
+    // we will only use 0th buffer
+    struct iovec* msg_iov = (struct iovec*)messageHeader->IOVectors;
+    while ((res = sendto(fd, msg_iov[0].iov_base, msg_iov[0].iov_len, socketFlags, (sockaddr *)messageHeader->SocketAddress, (socklen_t)messageHeader->SocketAddressLen)) < 0 && errno == EINTR);
+#endif // CMSG_SPACE
 
     if (res != -1)
     {
@@ -1624,7 +1755,11 @@ int32_t SystemNative_Accept(intptr_t socket, uint8_t* socketAddress, int32_t* so
     socklen_t addrLen = (socklen_t)*socketAddressLen;
     int accepted;
 #if HAVE_ACCEPT4 && defined(SOCK_CLOEXEC)
+#if defined(TARGET_WASI) // WASI is always FD_CLOEXEC and we always need SOCK_NONBLOCK. SOCK_CLOEXEC doesn't make sense in WASI.
+    while ((accepted = accept4(fd, (struct sockaddr*)socketAddress, &addrLen, SOCK_NONBLOCK)) < 0 && errno == EINTR);
+#else // !TARGET_WASI
     while ((accepted = accept4(fd, (struct sockaddr*)socketAddress, &addrLen, SOCK_CLOEXEC)) < 0 && errno == EINTR);
+#endif // !TARGET_WASI
 #else
     while ((accepted = accept(fd, (struct sockaddr*)socketAddress, &addrLen)) < 0 && errno == EINTR);
 // Horizon has no exec inheritance contract. libnx fcntl supports only
@@ -1642,7 +1777,6 @@ int32_t SystemNative_Accept(intptr_t socket, uint8_t* socketAddress, int32_t* so
         errno = oldErrno;
     }
 #endif
-#endif
 #if !defined(__linux__)
     // On macOS and FreeBSD new socket inherits flags from accepting fd.
     // Our socket code expects new socket to be in blocking mode by default.
@@ -1653,6 +1787,7 @@ int32_t SystemNative_Accept(intptr_t socket, uint8_t* socketAddress, int32_t* so
         accepted = -1;
         errno = oldErrno;
     }
+#endif
 #endif
     if (accepted == -1)
     {
@@ -1749,7 +1884,7 @@ int32_t SystemNative_Connectx(intptr_t socket, uint8_t* socketAddress, int32_t s
     }
 #endif
     // avoid possible warning about unused parameters
-    (void*)data;
+    (void)data;
     (void)dataLen;
     (void)tfo;
     sent = 0;
@@ -1841,9 +1976,11 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionLevel, int32_t socket
 
             switch (socketOptionName)
             {
+#if defined(SO_DEBUG)
                 case SocketOptionName_SO_DEBUG:
                     *optName = SO_DEBUG;
                     return true;
+#endif
 
                 case SocketOptionName_SO_ACCEPTCONN:
                     *optName = SO_ACCEPTCONN;
@@ -1857,23 +1994,31 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionLevel, int32_t socket
                     *optName = SO_KEEPALIVE;
                     return true;
 
+#if defined(SO_DONTROUTE)
                 case SocketOptionName_SO_DONTROUTE:
                     *optName = SO_DONTROUTE;
                     return true;
+#endif
 
+#if defined(SO_BROADCAST)
                 case SocketOptionName_SO_BROADCAST:
                     *optName = SO_BROADCAST;
                     return true;
+#endif
 
                 // case SocketOptionName_SO_USELOOPBACK:
 
+#if defined(SO_LINGER)
                 case SocketOptionName_SO_LINGER:
                     *optName = SO_LINGER;
                     return true;
+#endif
 
+#if defined(SO_OOBINLINE)
                 case SocketOptionName_SO_OOBINLINE:
                     *optName = SO_OOBINLINE;
                     return true;
+#endif
 
                 // case SocketOptionName_SO_DONTLINGER:
 
@@ -1887,14 +2032,18 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionLevel, int32_t socket
                     *optName = SO_RCVBUF;
                     return true;
 
+#if defined(SO_SNDLOWAT)
                 case SocketOptionName_SO_SNDLOWAT:
                     *optName = SO_SNDLOWAT;
                     return true;
+#endif
 
+#if defined(SO_RCVLOWAT)
                 case SocketOptionName_SO_RCVLOWAT:
                     *optName = SO_RCVLOWAT;
                     return true;
 
+#endif
                 case SocketOptionName_SO_SNDTIMEO:
                     *optName = SO_SNDTIMEO;
                     return true;
@@ -2054,10 +2203,13 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionLevel, int32_t socket
 
                 // case SocketOptionName_SO_TCP_BSDURGENT:
 
+#ifdef TCP_KEEPCNT
                 case SocketOptionName_SO_TCP_KEEPALIVE_RETRYCOUNT:
                     *optName = TCP_KEEPCNT;
                     return true;
+#endif
 
+#if defined(TCP_KEEPALIVE) || defined(TCP_KEEPIDLE)
                 case SocketOptionName_SO_TCP_KEEPALIVE_TIME:
                     *optName =
                     #if HAVE_TCP_H_TCP_KEEPALIVE
@@ -2066,10 +2218,13 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionLevel, int32_t socket
                         TCP_KEEPIDLE;
                     #endif
                     return true;
+#endif
 
+#ifdef TCP_KEEPINTVL
                 case SocketOptionName_SO_TCP_KEEPALIVE_INTERVAL:
                     *optName = TCP_KEEPINTVL;
                     return true;
+#endif
 
 #ifdef TCP_FASTOPEN
                 case SocketOptionName_SO_TCP_FASTOPEN:
@@ -2117,9 +2272,11 @@ static bool TryConvertSocketTypePlatformToPal(int platformSocketType, int32_t* p
             *palSocketType = SocketType_SOCK_DGRAM;
             return true;
 
+#if defined(SOCK_RAW)
         case SOCK_RAW:
             *palSocketType = SocketType_SOCK_RAW;
             return true;
+#endif // SOCK_RAW
 
 #ifdef SOCK_RDM
         case SOCK_RDM:
@@ -2127,9 +2284,11 @@ static bool TryConvertSocketTypePlatformToPal(int platformSocketType, int32_t* p
             return true;
 #endif
 
+#if defined(SOCK_SEQPACKET)
         case SOCK_SEQPACKET:
             *palSocketType = SocketType_SOCK_SEQPACKET;
             return true;
+#endif // SOCK_SEQPACKET
 
         default:
             *palSocketType = (int32_t)platformSocketType;
@@ -2163,7 +2322,11 @@ int32_t SystemNative_GetSockOpt(
             socklen_t optLen = (socklen_t)*optionLen;
             // On Unix, SO_REUSEPORT controls the ability to bind multiple sockets to the same address.
             int err = getsockopt(fd, SOL_SOCKET, SO_REUSEPORT, optionValue, &optLen);
-
+#elif defined(SO_REUSEADDR)
+            socklen_t optLen = (socklen_t)*optionLen;
+            int err = getsockopt(fd, SOL_SOCKET, SO_REUSEADDR, optionValue, &optLen);
+#endif
+#if defined(SO_REUSEPORT) || defined(SO_REUSEADDR)
             if (err != 0)
             {
                 return SystemNative_ConvertErrorPlatformToPal(errno);
@@ -2180,7 +2343,7 @@ int32_t SystemNative_GetSockOpt(
                 value = value == 0 ? 1 : 0;
             }
             *(int32_t*)optionValue = value;
-#else // !SO_REUSEPORT
+#else // !SO_REUSEPORT !SO_REUSEADDR
             *optionValue = 0;
 #endif
             return Error_SUCCESS;
@@ -2300,7 +2463,6 @@ SystemNative_SetSockOpt(intptr_t socket, int32_t socketOptionLevel, int32_t sock
         // We make both SocketOptionName_SO_REUSEADDR and SocketOptionName_SO_EXCLUSIVEADDRUSE control SO_REUSEPORT/SO_REUSEADDR.
         if (socketOptionName == SocketOptionName_SO_EXCLUSIVEADDRUSE || socketOptionName == SocketOptionName_SO_REUSEADDR)
         {
-#ifdef SO_REUSEPORT
             if (optionLen != sizeof(int32_t))
             {
                 return Error_EINVAL;
@@ -2321,6 +2483,7 @@ SystemNative_SetSockOpt(intptr_t socket, int32_t socketOptionLevel, int32_t sock
                 }
             }
 
+#ifdef SO_REUSEPORT
             // An application that sets SO_REUSEPORT/SO_REUSEADDR can reuse the endpoint with another
             // application that sets the same option. If one application sets SO_REUSEPORT and another
             // sets SO_REUSEADDR the second application will fail to bind. We set both options, this
@@ -2331,7 +2494,10 @@ SystemNative_SetSockOpt(intptr_t socket, int32_t socketOptionLevel, int32_t sock
                 err = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &value, (socklen_t)optionLen);
             }
             return err == 0 ? Error_SUCCESS : SystemNative_ConvertErrorPlatformToPal(errno);
-#else // !SO_REUSEPORT
+#elif defined(SO_REUSEADDR)
+            int err = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &value, (socklen_t)optionLen);
+            return err == 0 ? Error_SUCCESS : SystemNative_ConvertErrorPlatformToPal(errno);
+#else // !SO_REUSEPORT !SO_REUSEADDR
             return Error_SUCCESS;
 #endif
         }
@@ -2389,9 +2555,11 @@ static bool TryConvertSocketTypePalToPlatform(int32_t palSocketType, int* platfo
             *platformSocketType = SOCK_DGRAM;
             return true;
 
+#if defined(SOCK_RAW)
         case SocketType_SOCK_RAW:
             *platformSocketType = SOCK_RAW;
             return true;
+#endif // SOCK_RAW
 
 #ifdef SOCK_RDM
         case SocketType_SOCK_RDM:
@@ -2399,9 +2567,11 @@ static bool TryConvertSocketTypePalToPlatform(int32_t palSocketType, int* platfo
             return true;
 #endif
 
+#if defined(SOCK_SEQPACKET)
         case SocketType_SOCK_SEQPACKET:
             *platformSocketType = SOCK_SEQPACKET;
             return true;
+#endif // SOCK_SEQPACKET
 
         default:
             *platformSocketType = (int)palSocketType;
@@ -2445,9 +2615,11 @@ static bool TryConvertProtocolTypePalToPlatform(int32_t palAddressFamily, int32_
                     *platformProtocolType = 0;
                     return true;
 
+#if defined(IPPROTO_ICMP)
                 case ProtocolType_PT_ICMP:
                     *platformProtocolType = IPPROTO_ICMP;
                     return true;
+#endif
 
                 case ProtocolType_PT_TCP:
                     *platformProtocolType = IPPROTO_TCP;
@@ -2457,9 +2629,11 @@ static bool TryConvertProtocolTypePalToPlatform(int32_t palAddressFamily, int32_
                     *platformProtocolType = IPPROTO_UDP;
                     return true;
 
+#if defined(IPPROTO_IGMP)
                 case ProtocolType_PT_IGMP:
                     *platformProtocolType = IPPROTO_IGMP;
                     return true;
+#endif
 
                 case ProtocolType_PT_RAW:
                     *platformProtocolType = IPPROTO_RAW;
@@ -2477,10 +2651,12 @@ static bool TryConvertProtocolTypePalToPlatform(int32_t palAddressFamily, int32_
                     *platformProtocolType = 0;
                     return true;
 
+#if defined(IPPROTO_ICMPV6)
                 case ProtocolType_PT_ICMPV6:
                 case ProtocolType_PT_ICMP:
                     *platformProtocolType = IPPROTO_ICMPV6;
                     return true;
+#endif
 
                 case ProtocolType_PT_TCP:
                     *platformProtocolType = IPPROTO_TCP;
@@ -2490,29 +2666,39 @@ static bool TryConvertProtocolTypePalToPlatform(int32_t palAddressFamily, int32_
                     *platformProtocolType = IPPROTO_UDP;
                     return true;
 
+#if defined(IPPROTO_IGMP)
                 case ProtocolType_PT_IGMP:
                     *platformProtocolType = IPPROTO_IGMP;
                     return true;
+#endif
 
                 case ProtocolType_PT_RAW:
                     *platformProtocolType = IPPROTO_RAW;
                     return true;
 
+#if defined(IPPROTO_DSTOPTS)
                 case ProtocolType_PT_DSTOPTS:
                     *platformProtocolType = IPPROTO_DSTOPTS;
                     return true;
+#endif
 
+#if defined(IPPROTO_NONE)
                 case ProtocolType_PT_NONE:
                     *platformProtocolType = IPPROTO_NONE;
                     return true;
+#endif
 
+#if defined(IPPROTO_ROUTING)
                 case ProtocolType_PT_ROUTING:
                     *platformProtocolType = IPPROTO_ROUTING;
                     return true;
+#endif
 
+#if defined(IPPROTO_FRAGMENT)
                 case ProtocolType_PT_FRAGMENT:
                     *platformProtocolType = IPPROTO_FRAGMENT;
                     return true;
+#endif
 
                 default:
                     *platformProtocolType = (int)palProtocolType;
@@ -2568,9 +2754,11 @@ static bool TryConvertProtocolTypePlatformToPal(int32_t palAddressFamily, int pl
                     *palProtocolType = ProtocolType_PT_UNSPECIFIED;
                     return true;
 
+#if defined(IPPROTO_ICMP)
                 case IPPROTO_ICMP:
                     *palProtocolType = ProtocolType_PT_ICMP;
                     return true;
+#endif
 
                 case IPPROTO_TCP:
                     *palProtocolType = ProtocolType_PT_TCP;
@@ -2580,9 +2768,11 @@ static bool TryConvertProtocolTypePlatformToPal(int32_t palAddressFamily, int pl
                     *palProtocolType = ProtocolType_PT_UDP;
                     return true;
 
+#if defined(IPPROTO_IGMP)
                 case IPPROTO_IGMP:
                     *palProtocolType = ProtocolType_PT_IGMP;
                     return true;
+#endif
 
                 case IPPROTO_RAW:
                     *palProtocolType = ProtocolType_PT_RAW;
@@ -2600,9 +2790,11 @@ static bool TryConvertProtocolTypePlatformToPal(int32_t palAddressFamily, int pl
                     *palProtocolType = ProtocolType_PT_UNSPECIFIED;
                     return true;
 
+#if defined(IPPROTO_ICMPV6)
                 case IPPROTO_ICMPV6:
                     *palProtocolType = ProtocolType_PT_ICMPV6;
                     return true;
+#endif
 
                 case IPPROTO_TCP:
                     *palProtocolType = ProtocolType_PT_TCP;
@@ -2612,29 +2804,39 @@ static bool TryConvertProtocolTypePlatformToPal(int32_t palAddressFamily, int pl
                     *palProtocolType = ProtocolType_PT_UDP;
                     return true;
 
+#if defined(IPPROTO_IGMP)
                 case IPPROTO_IGMP:
                     *palProtocolType = ProtocolType_PT_IGMP;
                     return true;
+#endif
 
                 case IPPROTO_RAW:
                     *palProtocolType = ProtocolType_PT_RAW;
                     return true;
 
+#if defined(IPPROTO_DSTOPTS)
                 case IPPROTO_DSTOPTS:
                     *palProtocolType = ProtocolType_PT_DSTOPTS;
                     return true;
+#endif
 
+#if defined(IPPROTO_NONE)
                 case IPPROTO_NONE:
                     *palProtocolType = ProtocolType_PT_NONE;
                     return true;
+#endif
 
+#if defined(IPPROTO_ROUTING)
                 case IPPROTO_ROUTING:
                     *palProtocolType = ProtocolType_PT_ROUTING;
                     return true;
+#endif
 
+#if defined(IPPROTO_FRAGMENT)
                 case IPPROTO_FRAGMENT:
                     *palProtocolType = ProtocolType_PT_FRAGMENT;
                     return true;
+#endif
 
                 default:
                     *palProtocolType = (int)platformProtocolType;
@@ -2684,6 +2886,9 @@ int32_t SystemNative_Socket(int32_t addressFamily, int32_t socketType, int32_t p
 
 #if defined(SOCK_CLOEXEC) && !defined(TARGET_LIBNX)
     platformSocketType |= SOCK_CLOEXEC;
+#endif
+#if defined(TARGET_WASI)
+    platformSocketType |= SOCK_NONBLOCK; // WASI sockets are always non-blocking, because in ST we don't have another thread which could be blocked
 #endif
     *createdSocket = socket(platformAddressFamily, platformSocketType, platformProtocolType);
     if (*createdSocket == -1)
@@ -2747,6 +2952,11 @@ int32_t SystemNative_GetSocketType(intptr_t socket, int32_t* addressFamily, int3
         !TryConvertSocketTypePlatformToPal(typeValue, socketType))
 #endif
     {
+#if defined(TARGET_WASI)
+        if (errno == EBADF){
+            return Error_ENOTSOCK;
+        }
+#endif // TARGET_WASI
         *socketType = SocketType_UNKNOWN;
     }
 
@@ -2776,6 +2986,7 @@ int32_t SystemNative_GetSocketType(intptr_t socket, int32_t* addressFamily, int3
 
 int32_t SystemNative_GetAtOutOfBandMark(intptr_t socket, int32_t* atMark)
 {
+#if defined(SIOCATMARK)
     if (atMark == NULL)
     {
         return Error_EFAULT;
@@ -2794,6 +3005,9 @@ int32_t SystemNative_GetAtOutOfBandMark(intptr_t socket, int32_t* atMark)
 
     *atMark = (int32_t)result;
     return Error_SUCCESS;
+#else // SIOCATMARK
+    return Error_ENOTSUP;
+#endif // SIOCATMARK
 }
 
 int32_t SystemNative_GetBytesAvailable(intptr_t socket, int32_t* available)
@@ -2840,11 +3054,27 @@ int32_t SystemNative_Select(int* readFds, int readFdsCount, int* writeFds, int w
     }
     else
     {
-       readSetPtr = readFdsCount == 0 ? NULL : calloc( __DARWIN_howmany(maxFd, __DARWIN_NFDBITS),  sizeof(int32_t));
-       writeSetPtr = writeFdsCount == 0 ? NULL : calloc( __DARWIN_howmany(maxFd, __DARWIN_NFDBITS),  sizeof(int32_t));
-       errorSetPtr = errorFdsCount == 0 ? NULL : calloc( __DARWIN_howmany(maxFd, __DARWIN_NFDBITS),  sizeof(int32_t));
-    }
+        // Since this code later calls select(maxFd + 1, ...) and sets bits for file descriptor values up to maxFd,
+        // the allocation needs to cover maxFd + 1 bits.
+        if (maxFd > INT_MAX - 1)
+            return Error_EINVAL;
 
+        size_t fdSetCount = __DARWIN_howmany(maxFd + 1, __DARWIN_NFDBITS);
+        size_t fdSetSize = sizeof(((fd_set*)0)->fds_bits[0]);
+        readSetPtr = readFdsCount == 0 ? NULL : (fd_set*)calloc(fdSetCount, fdSetSize);
+        writeSetPtr = writeFdsCount == 0 ? NULL : (fd_set*)calloc(fdSetCount, fdSetSize);
+        errorSetPtr = errorFdsCount == 0 ? NULL : (fd_set*)calloc(fdSetCount, fdSetSize);
+
+        if ((readFdsCount != 0 && readSetPtr == NULL)
+            || (writeFdsCount != 0 && writeSetPtr == NULL)
+            || (errorFdsCount != 0 && errorSetPtr == NULL))
+        {
+            free(readSetPtr);
+            free(writeSetPtr);
+            free(errorSetPtr);
+            return Error_ENOMEM;
+        }
+    }
 
     struct timeval timeout;
     timeout.tv_sec = microseconds / 1000000;
@@ -2871,6 +3101,12 @@ int32_t SystemNative_Select(int* readFds, int readFdsCount, int* writeFds, int w
 
     if (*triggered < 0)
     {
+        if (maxFd >= FD_SETSIZE)
+        {
+            free(readSetPtr);
+            free(writeSetPtr);
+            free(errorSetPtr);
+        }
         return SystemNative_ConvertErrorPlatformToPal(errno);
     }
 
@@ -2900,11 +3136,15 @@ int32_t SystemNative_Select(int* readFds, int readFdsCount, int* writeFds, int w
     return Error_SUCCESS;
 #else
     // avoid unused parameters warnings
-    (void*)readFds;
-    (void*)writeFds;
-    (void*)errorFds;
-    (void*)triggered;
-    readFdsCount + writeFdsCount + errorFdsCount + microseconds + maxFd;
+    (void)readFds;
+    (void)writeFds;
+    (void)errorFds;
+    (void)triggered;
+    (void)readFdsCount;
+    (void)writeFdsCount;
+    (void)errorFdsCount;
+    (void)microseconds;
+    (void)maxFd;
     return SystemNative_ConvertErrorPlatformToPal(ENOTSUP);
 #endif
 }
@@ -3210,10 +3450,6 @@ static const size_t SocketEventBufferElementSize = sizeof(SocketEvent);
 static const size_t SocketEventBufferElementSize = 0;
 #endif
 
-static SocketEvents GetSocketEvents(int16_t filter, uint16_t flags)
-{
-    return SocketEvents_SA_NONE;
-}
 static int32_t CloseSocketEventPortInner(int32_t port)
 {
     return Error_ENOSYS;
@@ -3232,8 +3468,37 @@ static int32_t WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32
 {
     return Error_ENOSYS;
 }
+#endif  // !HAVE_KQUEUE !HAVE_EPOLL
 
-#endif
+#if defined(TARGET_WASI)
+// from https://github.com/WebAssembly/wasi-libc/blob/230d4be6c54bec93181050f9e25c87150506bdd0/libc-bottom-half/headers/private/wasi/descriptor_table.h
+bool descriptor_table_get_ref(int fd, void **entry);
+
+// this method is invading private implementation details of wasi-libc
+// we could get rid of it when https://github.com/WebAssembly/wasi-libc/issues/542 is resolved
+// or after WASIp3 promises are implemented, whatever comes first
+int32_t SystemNative_GetWasiSocketDescriptor(intptr_t socket, void** entry)
+{
+    if (entry == NULL)
+    {
+        return Error_EFAULT;
+    }
+
+    int fd = ToFileDescriptor(socket);
+    if(!descriptor_table_get_ref(fd, entry))
+    {
+        return Error_EFAULT;
+    }
+    return Error_SUCCESS;
+}
+#else
+int32_t SystemNative_GetWasiSocketDescriptor(intptr_t socket, void** entry)
+{
+    (void)socket;
+    (void)entry;
+    return Error_ENOSYS;
+}
+#endif  // TARGET_WASI
 
 int32_t SystemNative_CreateSocketEventPort(intptr_t* port)
 {
@@ -3332,8 +3597,13 @@ void SystemNative_GetDomainSocketSizes(int32_t* pathOffset, int32_t* pathSize, i
 #else
     struct sockaddr_un domainSocket;
 
+#if HAVE_SOCKADDR_UN_SUN_PATH
     *pathOffset = offsetof(struct sockaddr_un, sun_path);
     *pathSize = sizeof(domainSocket.sun_path);
+#else // HAVE_SOCKADDR_UN_SUN_PATH
+    *pathOffset = 0;
+    *pathSize = 0;
+#endif // HAVE_SOCKADDR_UN_SUN_PATH
     *addressSize = sizeof(domainSocket);
 #endif
 }
@@ -3517,10 +3787,13 @@ uint32_t SystemNative_InterfaceNameToIndex(char* interfaceName)
 #if TARGET_LIBNX
     assert(interfaceName != NULL);
     return Error_EINVAL;
-#else
+#elif HAVE_NET_IF_H
     assert(interfaceName != NULL);
     if (interfaceName[0] == '%')
         interfaceName++;
     return if_nametoindex(interfaceName);
-#endif
+#else // HAVE_NET_IF_H
+    (void)interfaceName;
+    return Error_ENOTSUP;
+#endif // HAVE_NET_IF_H
 }

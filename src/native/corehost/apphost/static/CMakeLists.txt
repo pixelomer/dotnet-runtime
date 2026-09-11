@@ -4,16 +4,6 @@
 project(singlefilehost)
 set(DOTNET_PROJECT_NAME "singlefilehost")
 
-# Add RPATH to the apphost binary that allows using local copies of shared libraries
-# dotnet core depends on for special scenarios when system wide installation of such
-# dependencies is not possible for some reason.
-# This cannot be enabled for MacOS (Darwin) since its RPATH works in a different way,
-# doesn't apply to libraries loaded via dlopen and most importantly, it is not transitive.
-if (NOT CLR_CMAKE_TARGET_APPLE)
-    set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-    set(CMAKE_INSTALL_RPATH "\$ORIGIN/netcoredeps")
-endif()
-
 include_directories(..)
 include_directories(../..)
 include_directories(../../hostmisc)
@@ -25,7 +15,7 @@ include_directories(${CLR_ARTIFACTS_OBJ_DIR}) # Generated version files
 add_subdirectory(../../hostmisc hostmisc)
 
 configure_file(${CLR_SRC_NATIVE_DIR}/corehost/configure.h.in ${GENERATED_INCLUDE_DIR}/corehost/configure.h)
-target_include_directories(hostmisc PUBLIC ${GENERATED_INCLUDE_DIR}/corehost)
+target_include_directories(hostmisc_interface INTERFACE ${GENERATED_INCLUDE_DIR}/corehost)
 
 if ((NOT DEFINED CLR_CMAKE_USE_SYSTEM_RAPIDJSON) OR (NOT CLR_CMAKE_USE_SYSTEM_RAPIDJSON))
     include_directories(${CLR_SRC_NATIVE_DIR}/external/)
@@ -46,7 +36,10 @@ set(HEADERS
     ../../fxr_resolver.h
 )
 
-add_compile_definitions(NATIVE_LIBS_EMBEDDED)
+# TODO: https://github.com/dotnet/runtime/issues/111523
+if (NOT CLR_CMAKE_TARGET_ANDROID)
+    add_compile_definitions(NATIVE_LIBS_EMBEDDED)
+endif()
 
 include(../../fxr/files.cmake)
 include(../../hostpolicy/files.cmake)
@@ -153,6 +146,10 @@ if(CLR_CMAKE_TARGET_WIN32)
         delayimp.lib
     )
 
+    # additional requirements for System.IO.Compression.Native
+    include(${CLR_SRC_NATIVE_DIR}/libs/System.IO.Compression.Native/extra_libs.cmake)
+    append_extra_compression_libs(NATIVE_LIBS)
+
     set(RUNTIMEINFO_LIB runtimeinfo)
 
 else()
@@ -165,15 +162,32 @@ else()
 
         System.Globalization.Native-Static
         System.IO.Compression.Native-Static
-        System.Net.Security.Native-Static
         System.Native-Static
-        System.Security.Cryptography.Native.OpenSsl-Static
+    )
 
-        palrt
+    if(NOT CLR_CMAKE_TARGET_ANDROID)
+        list(APPEND NATIVE_LIBS System.Net.Security.Native-Static)
+
+        if(NOT CLR_CMAKE_TARGET_APPLE)
+            list(APPEND NATIVE_LIBS System.Security.Cryptography.Native.OpenSsl-Static)
+        endif()
+    else()
+        list(APPEND NATIVE_LIBS
+            System.Security.Cryptography.Native.Android-Static
+        )
+    endif()
+
+    list(APPEND NATIVE_LIBS
         coreclrpal_dac
         corguids
         dbgutil
-        eventprovider
+    )
+    if (FEATURE_EVENT_TRACE)
+        LIST(APPEND NATIVE_LIBS
+            eventprovider
+        )
+    endif(FEATURE_EVENT_TRACE)
+    LIST(APPEND NATIVE_LIBS
         nativeresourcestring
     )
 
@@ -181,7 +195,7 @@ else()
     include(${CLR_SRC_NATIVE_DIR}/libs/System.IO.Compression.Native/extra_libs.cmake)
     append_extra_compression_libs(NATIVE_LIBS)
 
-    if (NOT CLR_CMAKE_TARGET_TVOS AND NOT CLR_CMAKE_HOST_ANDROID AND NOT CLR_CMAKE_TARGET_LIBNX) # no gssapi on tvOS, see https://developer.apple.com/documentation/gss
+    if (NOT CLR_CMAKE_TARGET_TVOS AND NOT CLR_CMAKE_TARGET_ANDROID AND NOT CLR_CMAKE_TARGET_BROWSER AND NOT CLR_CMAKE_TARGET_LIBNX) # no gssapi on tvOS, see https://developer.apple.com/documentation/gss
         # Additional requirements for System.Net.Security.Native
         include(${CLR_SRC_NATIVE_DIR}/libs/System.Net.Security.Native/extra_libs.cmake)
         append_extra_security_libs(NATIVE_LIBS)
@@ -191,7 +205,7 @@ else()
     include(${CLR_SRC_NATIVE_DIR}/libs/System.Native/extra_libs.cmake)
     append_extra_system_libs(NATIVE_LIBS)
 
-    if(NOT CLR_CMAKE_TARGET_MACCATALYST AND NOT CLR_CMAKE_TARGET_IOS AND NOT CLR_CMAKE_TARGET_TVOS AND NOT CLR_CMAKE_HOST_ANDROID AND NOT CLR_CMAKE_TARGET_LIBNX)
+    if(NOT CLR_CMAKE_TARGET_APPLE AND NOT CLR_CMAKE_TARGET_ANDROID AND NOT CLR_CMAKE_TARGET_BROWSER AND NOT CLR_CMAKE_TARGET_LIBNX)
         # Additional requirements for System.Security.Cryptography.Native.OpenSsl
         include(${CLR_SRC_NATIVE_DIR}/libs/System.Security.Cryptography.Native/extra_libs.cmake)
         append_extra_cryptography_libs(NATIVE_LIBS)
@@ -200,6 +214,10 @@ else()
     set(RUNTIMEINFO_LIB runtimeinfo)
 
 endif()
+
+LIST(APPEND NATIVE_LIBS
+    gcinfo
+)
 
 if(CLR_CMAKE_TARGET_APPLE)
     LIST(APPEND NATIVE_LIBS
@@ -273,6 +291,24 @@ endif(CLR_CMAKE_TARGET_APPLE)
 
 set_property(TARGET singlefilehost PROPERTY ENABLE_EXPORTS 1)
 
+# Force the linker to pull in symbols from coreclr_static even though nothing in
+# singlefilehost references them directly. Without this, the linker's dead code
+# elimination can drop object files and the exports are missing from the binary.
+# This should be kept in sync with singlefilehost_unixexports.src.
+if(CLR_CMAKE_TARGET_APPLE)
+    target_link_options(singlefilehost PRIVATE
+        -Wl,-u,_DotNetRuntimeInfo
+        -Wl,-u,_g_dacTable
+        -Wl,-u,_MetaDataGetDispenser
+        -Wl,-u,_DotNetRuntimeContractDescriptor)
+elseif(NOT CLR_CMAKE_TARGET_WIN32)
+    target_link_options(singlefilehost PRIVATE
+        -Wl,-u,DotNetRuntimeInfo
+        -Wl,-u,g_dacTable
+        -Wl,-u,MetaDataGetDispenser
+        -Wl,-u,DotNetRuntimeContractDescriptor)
+endif()
+
 target_link_libraries(
     singlefilehost
     PRIVATE
@@ -286,3 +322,7 @@ target_link_libraries(
 target_link_libraries(singlefilehost PRIVATE hostmisc)
 
 add_sanitizer_runtime_support(singlefilehost)
+
+if (CLR_CMAKE_HOST_APPLE)
+    adhoc_sign_with_entitlements(singlefilehost "${CLR_ENG_NATIVE_DIR}/entitlements.plist")
+endif()

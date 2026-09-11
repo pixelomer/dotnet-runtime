@@ -498,19 +498,19 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
     //
     GenTree* fwdSubNode = defNode->AsLclVarCommon()->Data();
 
-    // Can't substitute GT_CATCH_ARG.
-    // Can't substitute GT_LCLHEAP.
+    // Can't substitute GT_CATCH_ARG, GT_LCLHEAP or GT_ASYNC_CONTINUATION.
     //
-    // Don't substitute a no return call (trips up morph in some cases).
-    if (fwdSubNode->OperIs(GT_CATCH_ARG, GT_LCLHEAP))
+    if (fwdSubNode->OperIs(GT_CATCH_ARG, GT_LCLHEAP, GT_ASYNC_CONTINUATION))
     {
-        JITDUMP(" tree to sub is catch arg, or lcl heap\n");
+        JITDUMP(" tree to sub is %s\n", GenTree::OpName(fwdSubNode->OperGet()));
         return false;
     }
 
-    if (fwdSubNode->IsCall() && fwdSubNode->AsCall()->IsNoReturn())
+    // Do not substitute async calls; if the target node has a temp BYREF node,
+    // that creates illegal IR.
+    if (gtTreeContainsAsyncCall(fwdSubNode))
     {
-        JITDUMP(" tree to sub is a 'no return' call\n");
+        JITDUMP(" tree has an async call\n");
         return false;
     }
 
@@ -569,8 +569,11 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
     // Consider instead using the height of the fwdSubNode.
     //
     unsigned const nodeLimit = 16;
+    auto           countNode = [](GenTree* tree) -> unsigned {
+        return 1;
+    };
 
-    if (gtComplexityExceeds(fwdSubNode, nodeLimit))
+    if (gtComplexityExceeds(fwdSubNode, nodeLimit, countNode))
     {
         JITDUMP(" tree to sub has more than %u nodes\n", nodeLimit);
         return false;
@@ -633,7 +636,7 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
     // height of the fwdSubNode.
     //
     unsigned const nextTreeLimit = 200;
-    if ((fsv.GetComplexity() > nextTreeLimit) && gtComplexityExceeds(fwdSubNode, 1))
+    if ((fsv.GetComplexity() > nextTreeLimit) && gtComplexityExceeds(fwdSubNode, 1, countNode))
     {
         JITDUMP(" next stmt tree is too large (%u)\n", fsv.GetComplexity());
         return false;
@@ -784,8 +787,21 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
         unsigned const   dstLclNum = parentNode->AsLclVar()->GetLclNum();
         LclVarDsc* const dstVarDsc = lvaGetDesc(dstLclNum);
 
-        JITDUMP(" [marking V%02u as multi-reg-ret]", dstLclNum);
-        dstVarDsc->lvIsMultiRegRet = true;
+        JITDUMP(" [marking V%02u as multi-reg-dest]", dstLclNum);
+        dstVarDsc->SetIsMultiRegDest();
+    }
+
+    // Avoid forward substituting promoted locals if they are not DNER.
+    // This would require DNER'ing for many cases where the consumer
+    // does not support whole-local uses, such as GT_FIELD_LIST.
+    if (fwdSubNode->OperIs(GT_LCL_VAR) && varTypeIsSIMD(fwdSubNode))
+    {
+        LclVarDsc* const fwdSubVarDsc = lvaGetDesc(fwdSubNode->AsLclVar());
+        if (fwdSubVarDsc->lvPromoted && !fwdSubVarDsc->lvDoNotEnregister)
+        {
+            JITDUMP(" promoted SIMD lcl var\n");
+            return false;
+        }
     }
 
     // If a method returns a multi-reg type, only forward sub locals,
@@ -801,7 +817,7 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
         fsv.GetParentNode()->OperIs(GT_RETURN, GT_SWIFT_ERROR_RET))
     {
 #if defined(TARGET_X86)
-        if (fwdSubNode->TypeGet() == TYP_LONG)
+        if (fwdSubNode->TypeIs(TYP_LONG))
         {
             JITDUMP(" TYP_LONG fwd sub node, target is x86\n");
             return false;
@@ -835,6 +851,7 @@ bool Compiler::fgForwardSubStatement(Statement* stmt)
             LclVarDsc* const fwdVarDsc = lvaGetDesc(fwdLclNum);
 
             JITDUMP(" [marking V%02u as multi-reg-ret]", fwdLclNum);
+            // TODO-Quirk: Only needed for heuristics
             fwdVarDsc->lvIsMultiRegRet = true;
             fwdSubNodeLocal->gtFlags |= GTF_DONT_CSE;
         }

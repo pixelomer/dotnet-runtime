@@ -156,14 +156,3 @@ bool GCToOSInterface::ParseGCHeapAffinitizeRangesEntry(const char** text, size_t
 {
     return ParseIndexOrRange(text, first, last);
 }
-bool CLRCriticalSection::Initialize()
-{
-    pthread_mutexattr_t attr;
-    if (pthread_mutexattr_init(&attr)) return false;
-    int rc=pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    if (!rc) rc=pthread_mutex_init(&m_cs.mutex, &attr);
-    pthread_mutexattr_destroy(&attr); return !rc;
-}
-void CLRCriticalSection::Destroy() { if (pthread_mutex_destroy(&m_cs.mutex)) abort(); }
-void CLRCriticalSection::Enter() { if (pthread_mutex_lock(&m_cs.mutex)) abort(); }
-void CLRCriticalSection::Leave() { if (pthread_mutex_unlock(&m_cs.mutex)) abort(); }

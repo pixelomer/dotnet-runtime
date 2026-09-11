@@ -7,17 +7,13 @@
 #define LibnxTraceStartup(stage) ((void)0)
 #endif
 #include "common.h"
-#ifdef HOST_WINDOWS
-#include <windows.h>
-#endif
 #include "CommonTypes.h"
 #include "CommonMacros.h"
 #include "daccess.h"
-#include "PalRedhawkCommon.h"
-#include "PalRedhawk.h"
+#include "PalLimitedContext.h"
+#include "Pal.h"
 #include "rhassert.h"
 #include "slist.h"
-#include "varint.h"
 #include "regdisplay.h"
 #include "StackFrameIterator.h"
 #include "thread.h"
@@ -34,6 +30,7 @@
 #include "RestrictedCallouts.h"
 #include "yieldprocessornormalized.h"
 #include <minipal/cpufeatures.h>
+#include <minipal/time.h>
 
 #if defined(FEATURE_PERFTRACING) || defined(FEATURE_EVENT_TRACE)
 #include "EventPipeInterface.h"
@@ -46,7 +43,7 @@ uint64_t g_startupTimelineEvents[NUM_STARTUP_TIMELINE_EVENTS] = { 0 };
 #endif // PROFILE_STARTUP
 
 #ifdef HOST_WINDOWS
-EXTERN_C LONG WINAPI RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
+LONG WINAPI RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
 #else
 int32_t RhpHardwareExceptionHandler(uintptr_t faultCode, uintptr_t faultAddress, PAL_LIMITED_CONTEXT* palContext, uintptr_t* arg0Reg, uintptr_t* arg1Reg);
 #endif
@@ -108,7 +105,7 @@ static bool InitDLL(HANDLE hPalInstance)
     // Initialize interface dispatch.
     //
     LibnxTraceStartup("InterfaceDispatch");
-    if (!InitializeInterfaceDispatch())
+    if (!InterfaceDispatch_Initialize())
         return false;
 #endif
 
@@ -228,7 +225,7 @@ bool InitGSCookie()
 #endif
 
     // REVIEW: Need something better for PAL...
-    GSCookie val = (GSCookie)PalGetTickCount64();
+    GSCookie val = (GSCookie)minipal_lowres_ticks();
 
 #ifdef _DEBUG
     // In _DEBUG, always use the same value to make it easier to search for the cookie
@@ -246,19 +243,6 @@ bool InitGSCookie()
 #endif // TARGET_UNIX
 
 #ifdef PROFILE_STARTUP
-#define STD_OUTPUT_HANDLE ((uint32_t)-11)
-
-struct RegisterModuleTrace
-{
-    LARGE_INTEGER Begin;
-    LARGE_INTEGER End;
-};
-
-const int NUM_REGISTER_MODULE_TRACES = 16;
-int g_registerModuleCount = 0;
-
-RegisterModuleTrace g_registerModuleTraces[NUM_REGISTER_MODULE_TRACES] = { 0 };
-
 static void AppendInt64(char * pBuffer, uint32_t* pLen, uint64_t value)
 {
     char localBuffer[20];
@@ -291,12 +275,6 @@ static void UninitDLL()
     AppendInt64(buffer, &len, g_startupTimelineEvents[NONGC_INIT_COMPLETE]);
     AppendInt64(buffer, &len, g_startupTimelineEvents[GC_INIT_COMPLETE]);
     AppendInt64(buffer, &len, g_startupTimelineEvents[PROCESS_ATTACH_COMPLETE]);
-
-    for (int i = 0; i < g_registerModuleCount; i++)
-    {
-        AppendInt64(buffer, &len, g_registerModuleTraces[i].Begin.QuadPart);
-        AppendInt64(buffer, &len, g_registerModuleTraces[i].End.QuadPart);
-    }
 
     buffer[len++] = '\n';
 

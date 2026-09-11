@@ -512,6 +512,11 @@ bool GCToOSInterface::Initialize()
     InitNumaNodeInfo();
     InitCPUGroupInfo();
 
+    if (!g_processAffinitySet.Initialize(GCToOSInterface::GetTotalProcessorCount()))
+    {
+        return false;
+    }
+
     if (CanEnableGCCPUGroups())
     {
         // When CPU groups are enabled, then the process is not bound by the process affinity set at process launch.
@@ -916,7 +921,7 @@ const AffinitySet* GCToOSInterface::SetGCThreadsAffinitySet(uintptr_t configAffi
         if (!configAffinitySet->IsEmpty())
         {
             // Update the process affinity set using the configured set
-            for (size_t i = 0; i < MAX_SUPPORTED_CPUS; i++)
+            for (size_t i = 0; i < GCToOSInterface::GetTotalProcessorCount(); i++)
             {
                 if (g_processAffinitySet.Contains(i) && !configAffinitySet->Contains(i))
                 {
@@ -1116,6 +1121,11 @@ uint32_t GCToOSInterface::GetTotalProcessorCount()
     }
 }
 
+uint32_t GCToOSInterface::GetMaxProcessorCount()
+{
+    return (uint32_t)g_processAffinitySet.MaxCpuCount();
+}
+
 bool GCToOSInterface::CanEnableGCNumaAware()
 {
     return g_fEnableGCNumaAware;
@@ -1186,13 +1196,13 @@ bool GCToOSInterface::GetProcessorForHeap(uint16_t heap_number, uint16_t* proc_n
     // Locate heap_number-th available processor
     uint16_t procIndex = 0;
     size_t cnt = heap_number;
-    for (uint16_t i = 0; i < MAX_SUPPORTED_CPUS; i++)
+    for (uint32_t i = 0; i < GCToOSInterface::GetTotalProcessorCount(); i++)
     {
         if (g_processAffinitySet.Contains(i))
         {
             if (cnt == 0)
             {
-                procIndex = i;
+                procIndex = (uint16_t)i;
                 success = true;
                 break;
             }
@@ -1317,31 +1327,6 @@ static DWORD GCThreadStub(void* param)
     function(threadParam);
 
     return 0;
-}
-
-// Initialize the critical section
-bool CLRCriticalSection::Initialize()
-{
-    ::InitializeCriticalSection(&m_cs);
-    return true;
-}
-
-// Destroy the critical section
-void CLRCriticalSection::Destroy()
-{
-    ::DeleteCriticalSection(&m_cs);
-}
-
-// Enter the critical section. Blocks until the section can be entered.
-void CLRCriticalSection::Enter()
-{
-    ::EnterCriticalSection(&m_cs);
-}
-
-// Leave the critical section
-void CLRCriticalSection::Leave()
-{
-    ::LeaveCriticalSection(&m_cs);
 }
 
 // WindowsEvent is an implementation of GCEvent that forwards

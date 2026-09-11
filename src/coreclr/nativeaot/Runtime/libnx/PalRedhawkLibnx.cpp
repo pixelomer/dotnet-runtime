@@ -11,14 +11,14 @@
 #include <cwchar>
 #include <sal.h>
 #include "config.h"
-#include "UnixHandle.h"
+#include "LibnxHandle.h"
 #include <pthread.h>
 #include "../../../../native/libs/Common/pal_threading_libnx.h"
 #include "gcenv.h"
 #include "gcenv.ee.h"
 #include "gcconfig.h"
 #include "holder.h"
-#include "UnixContext.h"
+#include "NativeContext.h"
 #include "HardwareExceptions.h"
 #include "threadstore.h"
 #include "thread.h"
@@ -62,7 +62,6 @@ extern "C" {
 }
 using std::nullptr_t;
 
-#define PalRaiseFailFastException RaiseFailFastException
 
 #define INVALID_HANDLE_VALUE    ((HANDLE)(intptr_t)-1)
 
@@ -82,11 +81,8 @@ static const int tccMilliSecondsToMicroSeconds = 1000;
 static const int tccMilliSecondsToNanoSeconds = 1000000;
 static const int tccMicroSecondsToNanoSeconds = 1000;
 
-extern "C" void RaiseFailFastException(PEXCEPTION_RECORD arg1, PCONTEXT arg2, uint32_t arg3)
+void RhFailFast()
 {
-    // Subprocess crash dumps are unavailable. Preserve fatal termination.
-
-    // Aborts the process
     abort();
 }
 
@@ -330,29 +326,6 @@ public:
 // This wrapper borrows libnx's actual handle. The owning pthread must remain
 // alive until RuntimeThreadShutdown detaches it; closing this wrapper must not
 // close the libnx-owned kernel handle.
-class ThreadUnixHandle : public UnixHandleBase
-{
-    LibnxThreadRegistration* registration;
-public:
-    ThreadUnixHandle(LibnxThreadRegistration* value)
-        : UnixHandleBase(UnixHandleType::Thread), registration(value) {}
-    LibnxThreadRegistration* GetRegistration() { return registration; }
-    virtual bool Destroy() { return LibnxUnregisterThread(registration); }
-};
-
-extern "C" bool LibnxPausePalThread(void* handle, ThreadContext* context)
-{
-    auto thread = static_cast<ThreadUnixHandle*>(handle);
-    return thread && thread->GetType() == UnixHandleType::Thread &&
-        LibnxPauseRegisteredThread(thread->GetRegistration(), context);
-}
-extern "C" bool LibnxResumePalThread(void* handle)
-{
-    auto thread = static_cast<ThreadUnixHandle*>(handle);
-    return thread && thread->GetType() == UnixHandleType::Thread &&
-        LibnxResumeRegisteredThread(thread->GetRegistration());
-}
-
 void InitializeCurrentProcessCpuCount()
 {
     uint32_t count;
@@ -403,7 +376,7 @@ void InitializeOsPageSize()
 #endif
 }
 
-REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalGetOsPageSize()
+uint32_t PalGetOsPageSize()
 {
     return g_RhPageSize;
 }
@@ -424,7 +397,7 @@ static void ThreadKeyDestructor(void* thread)
 
 // The Redhawk PAL must be initialized before any of its exports can be called. Returns true for a successful
 // initialization and false on failure.
-REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
+bool PalInit()
 {
 #ifndef USE_PORTABLE_HELPERS
     if (!InitializeHardwareExceptionHandling())
@@ -457,7 +430,7 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
 }
 
 // This thread local variable is used for delegate marshalling
-DECLSPEC_THREAD intptr_t tls_thunkData;
+PLATFORM_THREAD_LOCAL intptr_t tls_thunkData;
 
 #ifdef FEATURE_EMULATED_TLS
 EXTERN_C intptr_t* RhpGetThunkData()
@@ -476,13 +449,13 @@ FCIMPLEND
 // It fails fast if a different thread was already registered.
 // Parameters:
 //  thread        - thread to attach
-extern "C" void PalAttachThread(void* thread)
+void PalAttachThread(void* thread)
 {
     if (thread == nullptr || pthread_getspecific(key) != nullptr || pthread_setspecific(key, thread) != 0)
         RhFailFast();
 }
 
-extern "C" bool PalDetachThread(void* thread)
+bool PalDetachThread(void* thread)
 {
     // POSIX clears the key before invoking its destructor, so no value is also
     // expected when RuntimeThreadShutdown was entered by pthread teardown.
@@ -498,38 +471,38 @@ extern "C" bool PalDetachThread(void* thread)
 }
 
 #if !defined(USE_PORTABLE_HELPERS) && !defined(FEATURE_RX_THUNKS)
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalAllocateThunksFromTemplate(HANDLE, uint32_t, size_t, void** newThunksOut)
+UInt32_BOOL PalAllocateThunksFromTemplate(HANDLE, uint32_t, size_t, void** newThunksOut)
 {
     *newThunksOut = nullptr;
     return UInt32_FALSE; // Executable aliases require a separate code allocator.
 }
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalFreeThunksFromTemplate(void*, size_t)
+UInt32_BOOL PalFreeThunksFromTemplate(void*, size_t)
 {
     return UInt32_FALSE;
 }
 #endif
 
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalMarkThunksAsValidCallTargets(void*, int, int, int, int)
+UInt32_BOOL PalMarkThunksAsValidCallTargets(void*, int, int, int, int)
 {
     return UInt32_FALSE; // No unvalidated executable thunk mappings.
 }
 
-REDHAWK_PALEXPORT void REDHAWK_PALAPI PalSleep(uint32_t milliseconds)
+void PalSleep(uint32_t milliseconds)
 {
     GCToOSInterface::Sleep(milliseconds);
 }
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI __stdcall PalSwitchToThread()
+UInt32_BOOL __stdcall PalSwitchToThread()
 {
     GCToOSInterface::YieldThread(0);
     return UInt32_FALSE; // Yield success does not indicate a context switch.
 }
 
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalAreShadowStacksEnabled()
+UInt32_BOOL PalAreShadowStacksEnabled()
 {
     return false;
 }
 
-extern "C" UInt32_BOOL CloseHandle(HANDLE handle)
+UInt32_BOOL PalCloseHandle(HANDLE handle)
 {
     if ((handle == NULL) || (handle == INVALID_HANDLE_VALUE))
     {
@@ -545,7 +518,7 @@ extern "C" UInt32_BOOL CloseHandle(HANDLE handle)
     return success ? UInt32_TRUE : UInt32_FALSE;
 }
 
-REDHAWK_PALEXPORT HANDLE REDHAWK_PALAPI PalCreateEventW(_In_opt_ LPSECURITY_ATTRIBUTES pEventAttributes, UInt32_BOOL manualReset, UInt32_BOOL initialState, _In_opt_z_ const WCHAR* pName)
+HANDLE PalCreateEventW(_In_opt_ LPSECURITY_ATTRIBUTES pEventAttributes, UInt32_BOOL manualReset, UInt32_BOOL initialState, _In_opt_z_ const WCHAR* pName)
 {
     EventUnixHandle* handle = new (nothrow) EventUnixHandle(manualReset, initialState);
     if (handle == nullptr) return INVALID_HANDLE_VALUE;
@@ -571,7 +544,7 @@ static void* BackgroundWorkEntry(void* state)
     work.callback(work.context);
     return nullptr;
 }
-REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartBackgroundWork(BackgroundCallback callback, void* context, UInt32_BOOL highPriority)
+bool PalStartBackgroundWork(BackgroundCallback callback, void* context, UInt32_BOOL highPriority)
 {
     // Scheduling policy tuning is pending. Preserve the pthread default priority.
     BackgroundWork* work = new (nothrow) BackgroundWork{callback, context};
@@ -581,17 +554,17 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartBackgroundWork(BackgroundCallback 
     return st == 0;
 }
 
-REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartBackgroundGCThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
+bool PalStartBackgroundGCThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
 {
     return PalStartBackgroundWork(callback, pCallbackContext, UInt32_FALSE);
 }
 
-REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartFinalizerThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
+bool PalStartFinalizerThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
 {
     return PalStartBackgroundWork(callback, pCallbackContext, UInt32_TRUE);
 }
 
-REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartEventPipeHelperThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
+bool PalStartEventPipeHelperThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext)
 {
     return PalStartBackgroundWork(callback, pCallbackContext, UInt32_FALSE);
 }
@@ -600,17 +573,17 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartEventPipeHelperThread(_In_ Backgro
 // to return monotonically increasing counts and avoid being affected by changes
 // to the system clock (either due to drift or due to explicit changes to system
 // time).
-REDHAWK_PALEXPORT uint64_t REDHAWK_PALAPI PalGetTickCount64()
+uint64_t PalGetTickCount64()
 {
     return GCToOSInterface::GetLowPrecisionTimeStamp();
 }
 
-REDHAWK_PALEXPORT HANDLE REDHAWK_PALAPI PalGetModuleHandleFromPointer(_In_ void* pointer)
+HANDLE PalGetModuleHandleFromPointer(_In_ void* pointer)
 {
     return LibnxGetModuleBase(pointer);
 }
 
-REDHAWK_PALEXPORT void PalPrintFatalError(const char* message)
+void PalPrintFatalError(const char* message)
 {
     // Write the message using lowest-level OS API available. This is used to print the stack overflow
     // message, so there is not much that can be done here.
@@ -619,7 +592,7 @@ REDHAWK_PALEXPORT void PalPrintFatalError(const char* message)
     (void)!write(STDERR_FILENO, message, strlen(message));
 }
 
-REDHAWK_PALEXPORT char* PalCopyTCharAsChar(const TCHAR* toCopy)
+char* PalCopyTCharAsChar(const TCHAR* toCopy)
 {
     NewArrayHolder<char> copy {new (nothrow) char[strlen(toCopy) + 1]};
     if (copy == nullptr) return nullptr;
@@ -627,12 +600,12 @@ REDHAWK_PALEXPORT char* PalCopyTCharAsChar(const TCHAR* toCopy)
     return copy.Extract();
 }
 
-REDHAWK_PALEXPORT HANDLE PalLoadLibrary(const char*)
+HANDLE PalLoadLibrary(const char*)
 {
     errno = ENOTSUP;
     return nullptr; // Only statically linked direct imports are supported.
 }
-REDHAWK_PALEXPORT void* PalGetProcAddress(HANDLE, const char*)
+void* PalGetProcAddress(HANDLE, const char*)
 {
     errno = ENOTSUP;
     return nullptr;
@@ -652,7 +625,7 @@ static int DataPermission(uint32_t protect)
         default: return -1; // Never acknowledge executable permissions.
     }
 }
-REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalVirtualProtect(void* address, size_t size, uint32_t protect)
+UInt32_BOOL PalVirtualProtect(void* address, size_t size, uint32_t protect)
 {
     int permission = DataPermission(protect);
     uintptr_t start = reinterpret_cast<uintptr_t>(address);
@@ -661,7 +634,7 @@ REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalVirtualProtect(void* address, si
     size_t pageBytes = PageBytes(size + (start - pageStart));
     return pageBytes && LibnxSetDataPermission(reinterpret_cast<void*>(pageStart), pageBytes, permission);
 }
-REDHAWK_PALEXPORT void* REDHAWK_PALAPI PalVirtualAlloc(size_t size, uint32_t protect)
+void* PalVirtualAlloc(size_t size, uint32_t protect)
 {
     size = PageBytes(size);
     if (!size || DataPermission(protect) < 0) return nullptr;
@@ -674,107 +647,21 @@ REDHAWK_PALEXPORT void* REDHAWK_PALAPI PalVirtualAlloc(size_t size, uint32_t pro
     }
     return memory;
 }
-REDHAWK_PALEXPORT void REDHAWK_PALAPI PalVirtualFree(void* address, size_t size)
+void PalVirtualFree(void* address, size_t size)
 {
     if (!nxvm_release(address, PageBytes(size))) RhFailFast();
 }
-REDHAWK_PALEXPORT void PalFlushInstructionCache(void* address, size_t size)
+void PalFlushInstructionCache(void* address, size_t size)
 {
     LibnxFlushInstructionCache(address, size);
 }
 
-extern "C" HANDLE GetCurrentProcess()
-{
-    return (HANDLE)-1;
-}
-
-extern "C" uint32_t GetCurrentProcessId()
+uint32_t PalGetCurrentProcessId()
 {
     return GCToOSInterface::GetCurrentProcessId();
 }
 
-extern "C" HANDLE GetCurrentThread()
-{
-    return (HANDLE)-2;
-}
-
-extern "C" UInt32_BOOL DuplicateHandle(
-    HANDLE hSourceProcessHandle,
-    HANDLE hSourceHandle,
-    HANDLE hTargetProcessHandle,
-    HANDLE * lpTargetHandle,
-    uint32_t dwDesiredAccess,
-    UInt32_BOOL bInheritHandle,
-    uint32_t dwOptions)
-{
-    // We can only duplicate the current thread handle. That is all that the MRT uses.
-    ASSERT(hSourceProcessHandle == GetCurrentProcess());
-    ASSERT(hTargetProcessHandle == GetCurrentProcess());
-    ASSERT(hSourceHandle == GetCurrentThread());
-    if (lpTargetHandle == nullptr) return UInt32_FALSE;
-    *lpTargetHandle = nullptr;
-    if (hSourceProcessHandle != GetCurrentProcess() || hTargetProcessHandle != GetCurrentProcess() ||
-        hSourceHandle != GetCurrentThread()) return UInt32_FALSE;
-    LibnxThreadRegistration* registration = LibnxRegisterCurrentThread();
-    if (!registration) return UInt32_FALSE;
-    *lpTargetHandle = new (nothrow) ThreadUnixHandle(registration);
-    if (*lpTargetHandle == nullptr && !LibnxUnregisterThread(registration)) RhFailFast();
-    return *lpTargetHandle != nullptr;
-}
-
-extern "C" UInt32_BOOL InitializeCriticalSection(CRITICAL_SECTION * lpCriticalSection)
-{
-    pthread_mutexattr_t mutexAttributes;
-    int st = pthread_mutexattr_init(&mutexAttributes);
-    if (st != 0)
-    {
-        return false;
-    }
-
-    st = pthread_mutexattr_settype(&mutexAttributes, PTHREAD_MUTEX_RECURSIVE);
-    if (st == 0)
-    {
-        st = pthread_mutex_init(&lpCriticalSection->mutex, &mutexAttributes);
-    }
-
-    pthread_mutexattr_destroy(&mutexAttributes);
-
-    return (st == 0);
-}
-
-extern "C" UInt32_BOOL InitializeCriticalSectionEx(CRITICAL_SECTION * lpCriticalSection, uint32_t arg2, uint32_t arg3)
-{
-    return InitializeCriticalSection(lpCriticalSection);
-}
-
-
-extern "C" void DeleteCriticalSection(CRITICAL_SECTION * lpCriticalSection)
-{
-    pthread_mutex_destroy(&lpCriticalSection->mutex);
-}
-
-extern "C" void EnterCriticalSection(CRITICAL_SECTION * lpCriticalSection)
-{
-    pthread_mutex_lock(&lpCriticalSection->mutex);;
-}
-
-extern "C" void LeaveCriticalSection(CRITICAL_SECTION * lpCriticalSection)
-{
-    pthread_mutex_unlock(&lpCriticalSection->mutex);
-}
-
-extern "C" UInt32_BOOL IsDebuggerPresent()
-{
-#ifdef HOST_WASM
-    // For now always true since the browser will handle it in case of WASM.
-    return UInt32_TRUE;
-#else
-    // UNIXTODO: Implement this function
-    return UInt32_FALSE;
-#endif
-}
-
-extern "C" UInt32_BOOL SetEvent(HANDLE event)
+UInt32_BOOL PalSetEvent(HANDLE event)
 {
     EventUnixHandle* unixHandle = (EventUnixHandle*)event;
     unixHandle->GetObject()->Set();
@@ -782,7 +669,7 @@ extern "C" UInt32_BOOL SetEvent(HANDLE event)
     return UInt32_TRUE;
 }
 
-extern "C" UInt32_BOOL ResetEvent(HANDLE event)
+UInt32_BOOL PalResetEvent(HANDLE event)
 {
     EventUnixHandle* unixHandle = (EventUnixHandle*)event;
     unixHandle->GetObject()->Reset();
@@ -790,7 +677,7 @@ extern "C" UInt32_BOOL ResetEvent(HANDLE event)
     return UInt32_TRUE;
 }
 
-extern "C" uint32_t GetEnvironmentVariableA(const char * name, char * buffer, uint32_t size)
+uint32_t PalGetEnvironmentVariable(const char * name, char * buffer, uint32_t size)
 {
     const char* value = getenv(name);
     if (value == NULL)
@@ -809,7 +696,7 @@ extern "C" uint32_t GetEnvironmentVariableA(const char * name, char * buffer, ui
     return (valueLen < UINT32_MAX) ? (valueLen + 1) : 0;
 }
 
-extern "C" uint16_t RtlCaptureStackBackTrace(uint32_t arg1, uint32_t arg2, void* arg3, uint32_t* arg4)
+uint16_t PalCaptureStackBackTrace(uint32_t arg1, uint32_t arg2, void* arg3, uint32_t* arg4)
 {
     // UNIXTODO: Implement this function
     return 0;
@@ -817,12 +704,7 @@ extern "C" uint16_t RtlCaptureStackBackTrace(uint32_t arg1, uint32_t arg2, void*
 
 // Horizon Thread::Hijack uses synchronous suspension directly. There is no
 // signal-based callback registration or POSIX pthread_kill emulation.
-REDHAWK_PALIMPORT HijackFunc* REDHAWK_PALAPI PalGetHijackTarget(HijackFunc* defaultTarget)
-{
-    return defaultTarget;
-}
-
-extern "C" uint32_t WaitForSingleObjectEx(HANDLE handle, uint32_t milliseconds, UInt32_BOOL alertable)
+uint32_t PalWaitForSingleObjectEx(HANDLE handle, uint32_t milliseconds, UInt32_BOOL alertable)
 {
     // The handle can only represent an event here
     // TODO: encapsulate this stuff
@@ -833,15 +715,15 @@ extern "C" uint32_t WaitForSingleObjectEx(HANDLE handle, uint32_t milliseconds, 
     return unixHandle->GetObject()->Wait(milliseconds);
 }
 
-REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalCompatibleWaitAny(UInt32_BOOL alertable, uint32_t timeout, uint32_t handleCount, HANDLE* pHandles, UInt32_BOOL allowReentrantWait)
+uint32_t PalCompatibleWaitAny(UInt32_BOOL alertable, uint32_t timeout, uint32_t handleCount, HANDLE* pHandles, UInt32_BOOL allowReentrantWait)
 {
     // Only a single handle wait for event is supported
     if (handleCount != 1 || pHandles == nullptr) return WAIT_FAILED;
 
-    return WaitForSingleObjectEx(pHandles[0], timeout, alertable);
+    return PalWaitForSingleObjectEx(pHandles[0], timeout, alertable);
 }
 
-REDHAWK_PALEXPORT HANDLE PalCreateLowMemoryResourceNotification()
+HANDLE PalCreateLowMemoryResourceNotification()
 {
     return NULL;
 }
@@ -856,32 +738,24 @@ extern "C" void _mm_pause()
 }
 #endif
 
-extern "C" int32_t _stricmp(const char *string1, const char *string2)
+int32_t _stricmp(const char *string1, const char *string2)
 {
     return strcasecmp(string1, string2);
 }
 
-REDHAWK_PALIMPORT void REDHAWK_PALAPI PopulateControlSegmentRegisters(CONTEXT* pContext)
-{
-#if defined(TARGET_X86) || defined(TARGET_AMD64)
-    // Currently the CONTEXT is only used on Windows for RaiseFailFastException.
-    // So we punt on filling in SegCs and SegSs for now.
-#endif
-}
-
 uint32_t g_RhNumberOfProcessors;
 
-REDHAWK_PALEXPORT int32_t PalGetProcessCpuCount()
+int32_t PalGetProcessCpuCount()
 {
     ASSERT(g_RhNumberOfProcessors > 0);
     return g_RhNumberOfProcessors;
 }
 
-REDHAWK_PALEXPORT bool PalGetMaximumStackBounds(void** low, void** high)
+bool PalGetMaximumStackBounds(void** low, void** high)
 {
     return LibnxGetCurrentStackBounds(low, high);
 }
-REDHAWK_PALEXPORT int32_t PalGetModuleFileName(const TCHAR** name, HANDLE moduleBase)
+int32_t PalGetModuleFileName(const TCHAR** name, HANDLE moduleBase)
 {
     // The loader supplies no stable module pathname here. Return no name rather
     // than inventing a path or exposing a pointer with the wrong lifetime.
@@ -889,7 +763,7 @@ REDHAWK_PALEXPORT int32_t PalGetModuleFileName(const TCHAR** name, HANDLE module
     return 0;
 }
 
-extern "C" void FlushProcessWriteBuffers()
+void PalFlushProcessWriteBuffers()
 {
     GCToOSInterface::FlushProcessWriteBuffers();
 }
@@ -897,7 +771,7 @@ extern "C" void FlushProcessWriteBuffers()
 static const int64_t SECS_BETWEEN_1601_AND_1970_EPOCHS = 11644473600LL;
 static const int64_t SECS_TO_100NS = 10000000; /* 10^7 */
 
-extern "C" void GetSystemTimeAsFileTime(FILETIME *lpSystemTimeAsFileTime)
+void PalGetSystemTimeAsFileTime(FILETIME *lpSystemTimeAsFileTime)
 {
     struct timeval time = { 0 };
     gettimeofday(&time, NULL);
@@ -909,17 +783,22 @@ extern "C" void GetSystemTimeAsFileTime(FILETIME *lpSystemTimeAsFileTime)
     lpSystemTimeAsFileTime->dwHighDateTime = (uint32_t)(result >> 32);
 }
 
-extern "C" uint64_t PalQueryPerformanceCounter()
+uint64_t PalQueryPerformanceCounter()
 {
     return GCToOSInterface::QueryPerformanceCounter();
 }
 
-extern "C" uint64_t PalQueryPerformanceFrequency()
+uint64_t PalQueryPerformanceFrequency()
 {
     return GCToOSInterface::QueryPerformanceFrequency();
 }
 
-extern "C" uint64_t PalGetCurrentOSThreadId()
+uint64_t PalGetCurrentOSThreadId()
 {
     return GCToOSInterface::GetCurrentThreadIdForLogging();
+}
+
+bool PalSetCurrentThreadName(const char*)
+{
+    return false; // No pthread naming API in this libnx/newlib target.
 }

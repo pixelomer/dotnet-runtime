@@ -107,7 +107,7 @@ namespace System.Reflection
             Debug.Assert(this != target);
             Debug.Assert(this.ReflectedType == target.ReflectedType);
 
-            return Signature.CompareSig(this.Signature, target.Signature);
+            return Signature.AreEqual(this.Signature, target.Signature);
         }
         internal BindingFlags BindingFlags => m_bindingFlags;
         #endregion
@@ -180,7 +180,7 @@ namespace System.Reflection
 
         public override Module Module => GetRuntimeModule();
         internal RuntimeModule GetRuntimeModule() { return m_declaringType.GetRuntimeModule(); }
-        public override bool IsCollectible => m_declaringType.IsCollectible;
+        public override bool IsCollectible => ReflectedTypeInternal.IsCollectible;
 
         public override bool Equals(object? obj) =>
             ReferenceEquals(this, obj) ||

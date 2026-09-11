@@ -366,6 +366,11 @@ IStringTesting : IUnknown
         /*[out]*/ LCID* outLcid) = 0;
 };
 
+struct __declspec(uuid("4242A2F9-995D-4302-A722-02058CF58158"))
+IInterface1 : IUnknown
+{
+};
+
 struct __declspec(uuid("7FBB8677-BDD0-4E5A-B38B-CA92A4555466"))
 IMiscTypesTesting : IUnknown
 {
@@ -376,6 +381,14 @@ IMiscTypesTesting : IUnknown
       virtual HRESULT STDMETHODCALLTYPE Marshal_Instance_Variant (
         /*[in]*/ LPCWSTR init,
         /*[out,retval]*/ VARIANT* result) = 0;
+
+      virtual HRESULT STDMETHODCALLTYPE Marshal_ByRefVariant (
+        /*[inout]*/ VARIANT* result,
+        /*[in]*/ VARIANT value) = 0;
+
+      virtual HRESULT STDMETHODCALLTYPE Marshal_Interface (
+        /*[in]*/ IUnknown* value,
+        /*[out,ret]*/ IInterface1** iface) = 0;
 };
 
 struct __declspec(uuid("592386a5-6837-444d-9de3-250815d18556"))
@@ -395,7 +408,8 @@ IErrorMarshalTesting : IUnknown
 
 enum IDispatchTesting_Exception
 {
-    IDispatchTesting_Exception_Disp,
+    IDispatchTesting_Exception_Disp,        // scode
+    IDispatchTesting_Exception_Disp_Legacy, // wCode
     IDispatchTesting_Exception_HResult,
     IDispatchTesting_Exception_Int,
 };
@@ -525,6 +539,8 @@ struct __declspec(uuid("57f396a1-58a0-425f-8807-9f938a534984"))
 ITrackMyLifetimeTesting : IUnknown
 {
     virtual HRESULT STDMETHODCALLTYPE GetAllocationCountCallback(_Outptr_ void** fptr) = 0;
+    virtual HRESULT STDMETHODCALLTYPE CreateAgileInstance(ITrackMyLifetimeTesting** agileInstance) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Method() = 0;
 };
 
 #pragma pack(pop)

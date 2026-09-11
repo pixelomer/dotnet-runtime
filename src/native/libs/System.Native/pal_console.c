@@ -196,8 +196,8 @@ static bool ConfigureTerminal(bool signalForBreak, bool forChild, uint8_t minCha
 
 void UninitializeTerminal(void)
 {
-    // This method is called on SIGQUIT/SIGINT from the signal dispatching thread
-    // and on atexit.
+    // This method is called on SIGQUIT/SIGINT from the signal dispatching thread,
+    // on atexit, and for AppDomain.UnhandledException.
 
     if (pthread_mutex_lock(&g_lock) == 0)
     {
@@ -474,4 +474,9 @@ int32_t SystemNative_InitializeTerminalAndSignalHandling(void)
     }
 
     return initialized;
+}
+
+void SystemNative_UninitializeTerminal(void)
+{
+    UninitializeTerminal();
 }

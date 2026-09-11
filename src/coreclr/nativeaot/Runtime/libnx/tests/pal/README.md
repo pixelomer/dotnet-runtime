@@ -1,5 +1,9 @@
 # Source-built PAL component probe
 
+These build commands target the preserved .NET 9.0.3 runtime. Use the
+`horizon-net9-nativeaot` branch for this recipe; the
+[managed stress guide](../managed/README.md) describes the .NET 10 probe.
+
 Use Linux x86-64, the SDK pinned in `global.json`, devkitA64 and libnx.
 Set `DEVKITPRO` to the devkitPro installation and `ICU_NX_INSTALL_DIR` to
 the install directory produced by the
