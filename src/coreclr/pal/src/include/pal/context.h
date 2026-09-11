@@ -32,7 +32,10 @@ extern "C"
 
 /* A type to wrap the native context type, which is ucontext_t on some
  * platforms and another type elsewhere. */
-#if HAVE_UCONTEXT_T
+#if defined(TARGET_LIBNX)
+#include <switch/arm/thread_context.h>
+typedef ThreadContext native_context_t;
+#elif HAVE_UCONTEXT_T
 #if HAVE_UCONTEXT_H
 #include <ucontext.h>
 #endif // HAVE_UCONTEXT_H
@@ -63,7 +66,7 @@ bool Xstate_IsAvx512Supported();
 bool Xstate_IsApxSupported();
 #endif // XSTATE_SUPPORTED || (HOST_AMD64 && HAVE_MACH_EXCEPTIONS)
 
-#if defined(HOST_64BIT) && defined(HOST_ARM64) && !defined(TARGET_FREEBSD) && !defined(__APPLE__)
+#if defined(HOST_64BIT) && defined(HOST_ARM64) && !defined(TARGET_FREEBSD) && !defined(__APPLE__) && !defined(TARGET_LIBNX)
 #if !defined(SVE_MAGIC)
 
 // Add the missing SVE defines
@@ -695,7 +698,9 @@ inline void *FPREG_Xstate_Egpr(const ucontext_t *uc, uint32_t *featureSize)
 
 #if defined(HOST_ARM64)
 
-#if defined(TARGET_FREEBSD)
+#if defined(TARGET_LIBNX)
+// Horizon conversions use ThreadContext directly (pal/libnx/context.h).
+#elif defined(TARGET_FREEBSD)
 
 #define MCREG_X0(mc)  (mc.mc_gpregs.gp_x[0])
 #define MCREG_X1(mc)  (mc.mc_gpregs.gp_x[1])

@@ -23,6 +23,9 @@ SET_DEFAULT_DEBUG_CHANNEL(THREAD); // some headers have code with asserts, so do
 #include "pal/thread.hpp"
 #include "pal/utils.h"
 #include "pal/virtual.h"
+#if defined(TARGET_LIBNX)
+#include "pal/libnx/context.h"
+#endif
 
 #if HAVE_SYS_PTRACE_H
 #include <sys/ptrace.h>
@@ -483,7 +486,7 @@ BOOL CONTEXT_GetRegisters(DWORD processId, LPCONTEXT lpContext)
     }
     else
     {
-        ucontext_t registers;
+        native_context_t registers;
 #if HAVE_PT_REGS
         struct pt_regs ptrace_registers;
         if (ptrace((__ptrace_request)PTRACE_GETREGS, processId, (caddr_t) &ptrace_registers, 0) == -1)
@@ -701,6 +704,9 @@ Return value :
 --*/
 void CONTEXTToNativeContext(CONST CONTEXT *lpContext, native_context_t *native)
 {
+#if defined(TARGET_LIBNX)
+    CorUnix::LibnxContextToNative(*lpContext, *native);
+#else
 #define ASSIGN_REG(reg) MCREG_##reg(native->uc_mcontext) = lpContext->reg;
     if ((lpContext->ContextFlags & CONTEXT_CONTROL) == CONTEXT_CONTROL)
     {
@@ -928,9 +934,10 @@ void CONTEXTToNativeContext(CONST CONTEXT *lpContext, native_context_t *native)
     }
 #endif //XSTATE_SUPPORTED
 
+#endif // TARGET_LIBNX
 }
 
-#if defined(HOST_64BIT) && defined(HOST_ARM64) && !defined(TARGET_FREEBSD) && !defined(__APPLE__)
+#if defined(HOST_64BIT) && defined(HOST_ARM64) && !defined(TARGET_FREEBSD) && !defined(__APPLE__) && !defined(TARGET_LIBNX)
 /*++
 Function :
     _GetNativeSigSimdContext
@@ -1041,6 +1048,9 @@ Return value :
 void CONTEXTFromNativeContext(const native_context_t *native, LPCONTEXT lpContext,
                               ULONG contextFlags)
 {
+#if defined(TARGET_LIBNX)
+    CorUnix::LibnxContextFromNative(*native, *lpContext, contextFlags);
+#else
     lpContext->ContextFlags = contextFlags;
 
 #define ASSIGN_REG(reg) lpContext->reg = MCREG_##reg(native->uc_mcontext);
@@ -1297,6 +1307,7 @@ void CONTEXTFromNativeContext(const native_context_t *native, LPCONTEXT lpContex
         }
     }
 #endif // HOST_AMD64 || HOST_ARM64
+#endif // TARGET_LIBNX
 }
 
 #if !HAVE_MACH_EXCEPTIONS
@@ -1316,7 +1327,9 @@ Return value :
 --*/
 LPVOID GetNativeContextPC(const native_context_t *context)
 {
-#ifdef HOST_AMD64
+#if defined(TARGET_LIBNX)
+    return (LPVOID)context->pc.x;
+#elif defined(HOST_AMD64)
     return (LPVOID)MCREG_Rip(context->uc_mcontext);
 #elif defined(HOST_X86)
     return (LPVOID) MCREG_Eip(context->uc_mcontext);
@@ -1344,7 +1357,9 @@ Return value :
 --*/
 LPVOID GetNativeContextSP(const native_context_t *context)
 {
-#ifdef HOST_AMD64
+#if defined(TARGET_LIBNX)
+    return (LPVOID)context->sp;
+#elif defined(HOST_AMD64)
     return (LPVOID)MCREG_Rsp(context->uc_mcontext);
 #elif defined(HOST_X86)
     return (LPVOID) MCREG_Esp(context->uc_mcontext);
@@ -1373,6 +1388,8 @@ Return value :
     information.
 
 --*/
+#if !defined(TARGET_LIBNX)
+// Horizon faults carry an ESR in ThreadExceptionDump, not POSIX siginfo.
 #ifdef ILL_ILLOPC
 // If si_code values are available for all signals, use those.
 DWORD CONTEXTGetExceptionCodeForSignal(const siginfo_t *siginfo,
@@ -1579,6 +1596,8 @@ DWORD CONTEXTGetExceptionCodeForSignal(const siginfo_t *siginfo,
     return EXCEPTION_ILLEGAL_INSTRUCTION;
 }
 #endif  // ILL_ILLOPC
+
+#endif // !TARGET_LIBNX
 
 #else // !HAVE_MACH_EXCEPTIONS
 
