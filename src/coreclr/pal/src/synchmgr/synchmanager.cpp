@@ -1727,6 +1727,9 @@ namespace CorUnix
         BYTE * pRecvBuf,
         LONG iBytes)
     {
+#if defined(TARGET_LIBNX)
+        return m_workerChannel.Read(pRecvBuf, iBytes, iTimeout);
+#else
 #if !HAVE_KQUEUE
         struct pollfd Poll;
 #endif // !HAVE_KQUEUE
@@ -1968,6 +1971,7 @@ namespace CorUnix
 
     RBFPP_exit:
         return (iRet < 0) ? iRet : iBytesRead;
+#endif // TARGET_LIBNX
     }
 
     /*++
@@ -2162,7 +2166,11 @@ namespace CorUnix
         ssize_t sszWritten;
         do
         {
+#if defined(TARGET_LIBNX)
+            sszWritten = m_workerChannel.Write(byCmd);
+#else
             sszWritten = write(m_iProcessPipeWrite, &byCmd, sizeof(BYTE));
+#endif
         } while (-1 == sszWritten &&
                  EAGAIN == errno &&
                  ++iRetryCount < MaxConsecutiveEagains &&
@@ -2336,6 +2344,9 @@ namespace CorUnix
         IPalObject *pProcessObject,
         CProcProcessLocalData * pProcLocalData)
     {
+#if defined(TARGET_LIBNX)
+        if (pProcLocalData->dwProcessId != gPID) return ERROR_NOT_SUPPORTED;
+#endif
         PAL_ERROR palErr = NO_ERROR;
         MonitoredProcessesListNode * pmpln;
         bool fWakeUpWorker = false;
@@ -2492,11 +2503,21 @@ namespace CorUnix
     {
         TRACE("The Synchronization Manager hijacked the current thread "
               "for process shutdown or thread termination\n");
+#if defined(TARGET_LIBNX)
+        // PAL deliberately parks these threads until process exit. An absent
+        // poll backend would turn that contract into a busy loop on Horizon.
+        Mutex mutex = 0;
+        CondVar neverSignaled = 0;
+        mutexLock(&mutex);
+        while (true)
+            if (condvarWait(&neverSignaled, &mutex) != 0) abort();
+#else
         while (true)
         {
             poll(NULL, 0, INFTIM);
             sched_yield();
         }
+#endif
 
         ASSERT("This code should never be executed\n");
     }
@@ -2699,6 +2720,10 @@ namespace CorUnix
     --*/
     bool CPalSynchronizationManager::CreateProcessPipe()
     {
+#if defined(TARGET_LIBNX)
+        // The embedded native channel is initialized with the owning manager.
+        return true;
+#else
         bool fRet = true;
 #if HAVE_KQUEUE && !HAVE_BROKEN_FIFO_KEVENT
         int iKq = -1;
@@ -2840,6 +2865,7 @@ namespace CorUnix
         }
 
         return fRet;
+#endif // TARGET_LIBNX
     }
 
     /*++
@@ -2856,6 +2882,10 @@ namespace CorUnix
     --*/
     PAL_ERROR CPalSynchronizationManager::ShutdownProcessPipe()
     {
+#if defined(TARGET_LIBNX)
+        m_workerChannel.Close();
+        return NO_ERROR;
+#else
         PAL_ERROR palErr = NO_ERROR;
 #ifndef CORECLR
         char szPipeFilename[MAX_PATH];
@@ -2900,6 +2930,7 @@ namespace CorUnix
         }
 
         return palErr;
+#endif // TARGET_LIBNX
     }
 
 #ifndef CORECLR
@@ -3408,6 +3439,12 @@ namespace CorUnix
         DWORD * pdwExitCode,
         bool * pfIsActualExitCode)
     {
+#if defined(TARGET_LIBNX)
+        // Foreign process handles/monitoring are rejected at their API entry
+        // points. The executing process cannot already have terminated.
+        if (dwPid != gPID) abort();
+        return false;
+#else
         pid_t pidWaitRetval;
         int iStatus;
         bool fRet = false;
@@ -3499,6 +3536,7 @@ namespace CorUnix
         }
 
         return fRet;
+#endif // TARGET_LIBNX
     }
 
     /*++

@@ -36,6 +36,11 @@ SET_DEFAULT_DEBUG_CHANNEL(PAL); // some headers have code with asserts, so do th
 #include "pal/stackstring.hpp"
 #include "pal/cgroup.h"
 #include <minipal/getexepath.h>
+#if defined(TARGET_LIBNX)
+extern "C" {
+#include <switch/kernel/svc.h>
+}
+#endif
 
 #if HAVE_MACH_EXCEPTIONS
 #include "../exception/machexception.h"
@@ -343,8 +348,23 @@ Initialize(
     if (init_count == 0)
     {
         // Set our pid and sid.
+#if defined(TARGET_LIBNX)
+        uint64_t nativeProcessId;
+        if (svcGetProcessId(&nativeProcessId, CUR_PROCESS_HANDLE) != 0 || nativeProcessId > UINT32_MAX) {
+            SetLastError(ERROR_NOT_SUPPORTED);
+            goto done;
+        }
+        gPID = static_cast<DWORD>(nativeProcessId);
+#else
         gPID = getpid();
+#endif
+#if defined(TARGET_LIBNX)
+        // Horizon has no Unix session IDs. Preserve the unavailable sentinel;
+        // named interprocess synchronization already reports unsupported.
+        gSID = static_cast<DWORD>(-1);
+#else
         gSID = getsid(gPID);
+#endif
 
         // Initialize the thread local storage
         if (FALSE == TLSInitialize())

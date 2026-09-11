@@ -519,7 +519,7 @@ CorUnix::InternalCreateProcess(
     LPPROCESS_INFORMATION lpProcessInformation
     )
 {
-#ifdef TARGET_TVOS
+#if defined(TARGET_TVOS) || defined(TARGET_LIBNX)
     return ERROR_NOT_SUPPORTED;
 #else
     PAL_ERROR palError = NO_ERROR;
@@ -2142,6 +2142,13 @@ OpenProcess(
         palError = ERROR_INVALID_PARAMETER;
         goto OpenProcessExit;
     }
+
+#if defined(TARGET_LIBNX)
+    if (dwProcessId != gPID) {
+        palError = ERROR_NOT_SUPPORTED;
+        goto OpenProcessExit;
+    }
+#endif
 
     palError = g_pObjectManager->AllocateObject(
         pThread,

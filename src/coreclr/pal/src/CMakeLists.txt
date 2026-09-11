@@ -224,6 +224,7 @@ if(CLR_CMAKE_TARGET_LIBNX)
     exception/libnx/exceptions.cpp
     exception/libnx/unwind.cpp
     loader/libnx/module.cpp
+    synchmgr/libnx/workerchannel.cpp
     thread/libnx/threadplatform.cpp
     map/libnx/virtual.cpp
     map/libnx/mapping.cpp

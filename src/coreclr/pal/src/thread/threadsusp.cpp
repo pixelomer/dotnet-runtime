@@ -73,6 +73,13 @@ CThreadSuspensionInfo::InternalSuspendNewThreadFromData(
     pThread->suspensionInfo.SetSelfSusp(TRUE);
     ReleaseSuspensionLock(pThread);
 
+#if defined(TARGET_LIBNX)
+    // Keep PAL's startup handshake and resume predicate; its existing resume
+    // semaphore is backed by native synchronization and needs no pipe fd.
+    pThread->SetStartStatus(TRUE);
+    pThread->suspensionInfo.WaitOnResumeSemaphore();
+    return NO_ERROR;
+#else
     int pipe_descs[2];
     int pipeRv =
 #if HAVE_PIPE2
@@ -126,6 +133,7 @@ CThreadSuspensionInfo::InternalSuspendNewThreadFromData(
     close(pipe_descs[1]);
 
     return palError;
+#endif // TARGET_LIBNX
 }
 
 /*++
@@ -261,6 +269,20 @@ CThreadSuspensionInfo::InternalResumeThreadFromData(
         goto InternalResumeThreadFromDataExit;
     }
 
+#if defined(TARGET_LIBNX)
+    if (pthrTarget->IsDummy()) palError = ERROR_NOT_SUPPORTED;
+    else if (pthrTarget->suspensionInfo.GetSelfSusp()) {
+        // Consume the suspended state under the existing suspension locks so
+        // competing resumers cannot post twice before the target wakes.
+        pthrTarget->suspensionInfo.SetSelfSusp(FALSE);
+        pthrTarget->suspensionInfo.PostOnResumeSemaphore();
+    }
+    else {
+        *pdwSuspendCount = 0;
+        palError = ERROR_BAD_COMMAND;
+    }
+    ReleaseSuspensionLocks(pthrResumer, pthrTarget);
+#else
     // If this is a dummy thread, then it represents a process that was created with CREATE_SUSPENDED
     // and it should have a blocking pipe set. If GetBlockingPipe returns -1 for a dummy thread, then
     // something is wrong - either CREATE_SUSPENDED wasn't used or the process was already resumed.
@@ -319,6 +341,8 @@ CThreadSuspensionInfo::InternalResumeThreadFromData(
         *pdwSuspendCount = 0;
         palError = ERROR_BAD_COMMAND;
     }
+
+#endif // TARGET_LIBNX
 
 InternalResumeThreadFromDataExit:
 

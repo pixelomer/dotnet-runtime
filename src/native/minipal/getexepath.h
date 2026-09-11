@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -26,6 +27,12 @@
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if defined(TARGET_LIBNX)
+// libnx parses the homebrew loader's argument vector before application entry.
+extern int __system_argc;
+extern char** __system_argv;
 #endif
 
 /**
@@ -82,6 +89,15 @@ static inline char* minipal_getexepath(void)
         return NULL;
     }
 
+    return strdup(path);
+#elif defined(TARGET_LIBNX)
+    if (__system_argc <= 0 || !__system_argv || !__system_argv[0])
+    {
+        errno = ENOENT;
+        return NULL;
+    }
+    char path[PATH_MAX];
+    if (!realpath(__system_argv[0], path)) return NULL;
     return strdup(path);
 #elif defined(TARGET_WASM)
     // This is a packaging convention that our tooling should enforce.

@@ -45,6 +45,10 @@ Abstract:
 #define VALIDATEOBJECT(obj)
 #endif
 
+#if defined(TARGET_LIBNX)
+#include "pal/libnx/workerchannel.h"
+#endif
+
 namespace CorUnix
 {
     const DWORD WTLN_FLAG_WAIT_ALL                               = 1<<1;
@@ -529,6 +533,9 @@ namespace CorUnix
         DWORD                           m_dwWorkerThreadTid;
         IPalObject *                    m_pipoThread;
         CPalThread *                    m_pthrWorker;
+#if defined(TARGET_LIBNX)
+        LibnxWorkerChannel              m_workerChannel;
+#endif
         int                             m_iProcessPipeRead;
         int                             m_iProcessPipeWrite;
 #if HAVE_KQUEUE

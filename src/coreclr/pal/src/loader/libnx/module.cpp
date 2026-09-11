@@ -1,4 +1,5 @@
 #include "pal/modulenative.h"
+#include <minipal/getexepath.h>
 #include <elf.h>
 #include <errno.h>
 #include <limits.h>
@@ -14,8 +15,6 @@ extern "C" {
 extern char __code_start[] __attribute__((visibility("hidden")));
 extern char __end__[] __attribute__((visibility("hidden")));
 extern Elf64_Dyn _DYNAMIC[] __attribute__((visibility("hidden")));
-extern int __system_argc;
-extern char** __system_argv;
 }
 namespace {
 struct ResidentModule {
@@ -60,10 +59,7 @@ void Initialize() {
     resident.ranges[2].size += header->bss_size;
     // libnx initializes these argv globals before calling the application.
     // Copy the actual executable path once; never fabricate a coreclr.so path.
-    if (__system_argc > 0 && __system_argv && __system_argv[0]) {
-        char path[PATH_MAX];
-        resident.path = realpath(__system_argv[0], path) ? strdup(path) : strdup(__system_argv[0]);
-    }
+    resident.path = minipal_getexepath();
     resident.valid = true;
     uintptr_t symbols = 0, strings = 0, hash = 0;
     size_t entrySize = 0;
