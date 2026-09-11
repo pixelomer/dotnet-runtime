@@ -21,7 +21,7 @@ struct Chunk {
     size_t size, references;
     void* backing;
     Handle handle;
-    bool executable, ownerMapped, slaveMapped;
+    bool executable, writableMapped, primaryMapped;
 };
 struct View { View* next; uintptr_t address; size_t size; };
 struct Region {
@@ -68,20 +68,17 @@ void Require(Result rc) {
     // or mapped. Terminate rather than publish corrupted allocator ownership.
     if (R_FAILED(rc)) abort();
 }
-void UnmapOwner(Chunk* c) {
-    if (!c->ownerMapped) return;
-    Require(svcControlCodeMemory(c->handle, CodeMapOperation_UnmapOwner,
-        reinterpret_cast<void*>(c->executable ? c->writable : c->primary), c->size, 0));
-    c->ownerMapped = false;
+void UnmapWritable(Chunk* c) {
+    if (!c->writableMapped) return;
+    Require(svcUnmapProcessMemory(reinterpret_cast<void*>(c->writable), c->handle, c->primary, c->size));
+    c->writableMapped = false;
 }
 void DestroyChunk(Chunk* c) {
     if (c->references) abort();
-    if (c->slaveMapped) {
-        Require(svcControlCodeMemory(c->handle, CodeMapOperation_UnmapSlave,
-            reinterpret_cast<void*>(c->primary), c->size, 0));
-    }
-    UnmapOwner(c);
-    if (c->handle != INVALID_HANDLE) Require(svcCloseHandle(c->handle));
+    UnmapWritable(c);
+    if (c->primaryMapped)
+        Require(svcUnmapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
+    // The process handle is borrowed from libnx's environment, not ours to close.
     free(c->backing); free(c);
 }
 Chunk* CreateChunk(Mapper* m, uintptr_t primary, size_t size, bool executable) {
@@ -91,23 +88,15 @@ Chunk* CreateChunk(Mapper* m, uintptr_t primary, size_t size, bool executable) {
     c->size = size; c->executable = executable; c->handle = INVALID_HANDLE;
     c->backing = aligned_alloc(Page, size);
     if (!c->backing) { free(c); return nullptr; }
-    Result rc = svcCreateCodeMemory(&c->handle, c->backing, size);
+    c->handle = envGetOwnProcessHandle();
+    memset(c->backing, 0, size);
+    armDCacheFlush(c->backing, size);
+    Result rc = svcMapProcessCodeMemory(c->handle, primary, reinterpret_cast<uintptr_t>(c->backing), size);
     if (R_FAILED(rc)) { free(c->backing); free(c); return nullptr; }
-    uintptr_t writable = executable ? c->writable : primary;
-    rc = svcControlCodeMemory(c->handle, CodeMapOperation_MapOwner, reinterpret_cast<void*>(writable), size, Perm_Rw);
+    c->primaryMapped = true;
+    rc = svcSetProcessMemoryPermission(c->handle, primary, size, executable ? Perm_Rx : Perm_Rw);
     if (R_FAILED(rc)) { DestroyChunk(c); return nullptr; }
-    c->ownerMapped = true;
-    // CodeMemory creation can initialize source pages itself. Zero the actual
-    // writable mapping after creation, never touch the now-locked heap source.
-    memset(reinterpret_cast<void*>(writable), 0, size);
-    if (executable) {
-        armDCacheFlush(reinterpret_cast<void*>(writable), size);
-        rc = svcControlCodeMemory(c->handle, CodeMapOperation_MapSlave, reinterpret_cast<void*>(primary), size, Perm_Rx);
-        if (R_FAILED(rc)) { DestroyChunk(c); return nullptr; }
-        c->slaveMapped = true;
-        armICacheInvalidate(reinterpret_cast<void*>(primary), size);
-        UnmapOwner(c);
-    }
+    if (executable) armICacheInvalidate(reinterpret_cast<void*>(primary), size);
     return c;
 }
 void MaybeDestroyMapper(Mapper* m) {
@@ -124,7 +113,9 @@ void MaybeDestroyMapper(Mapper* m) {
 }
 
 bool VMToOSInterface::CreateDoubleMemoryMapper(void** handle, size_t* maximum) {
-    if (!handle || !maximum || !envIsSyscallHinted(0x4b) || !envIsSyscallHinted(0x4c)) return false;
+    if (!handle || !maximum || envGetOwnProcessHandle() == INVALID_HANDLE ||
+        !envIsSyscallHinted(0x73) || !envIsSyscallHinted(0x74) || !envIsSyscallHinted(0x75) ||
+        !envIsSyscallHinted(0x77) || !envIsSyscallHinted(0x78)) return false;
     Mapper* m = static_cast<Mapper*>(calloc(1, sizeof(Mapper)));
     if (!m) return false;
     // Virtual arenas only: physical backing is allocated on commitment. libnx
@@ -218,7 +209,7 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
     Mapper* m = nullptr; Region* r = FindRegion(start, size, &m);
     if (!r || m != handle || offset != r->offset + (start - r->base)) return nullptr;
     // The API asks for committed RX memory. A view spanning holes or RW data
-    // is invalid; there is no fictitious second writable CodeMemory alias.
+    // is invalid; ownership is checked before asking Horizon to map it.
     for (uintptr_t current = start; current < start + size;) {
         Chunk* c = FindChunk(r, current);
         if (!c || !c->executable || c->references == SIZE_MAX) return nullptr;
@@ -227,15 +218,14 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
     View* view = static_cast<View*>(calloc(1, sizeof(View)));
     if (!view) return nullptr;
     for (Chunk* c = r->chunks; c; c = c->next) {
-        if (!Overlaps(start, size, c->primary, c->size) || c->ownerMapped) continue;
-        Result rc = svcControlCodeMemory(c->handle, CodeMapOperation_MapOwner,
-            reinterpret_cast<void*>(c->writable), c->size, Perm_Rw);
+        if (!Overlaps(start, size, c->primary, c->size) || c->writableMapped) continue;
+        Result rc = svcMapProcessMemory(reinterpret_cast<void*>(c->writable), c->handle, c->primary, c->size);
         if (R_FAILED(rc)) {
             for (Chunk* undo = r->chunks; undo; undo = undo->next)
-                if (undo->executable && !undo->references && undo->ownerMapped) UnmapOwner(undo);
+                if (undo->executable && !undo->references && undo->writableMapped) UnmapWritable(undo);
             free(view); return nullptr;
         }
-        c->ownerMapped = true;
+        c->writableMapped = true;
     }
     for (Chunk* c = r->chunks; c; c = c->next)
         if (Overlaps(start, size, c->primary, c->size)) ++c->references;
@@ -260,7 +250,7 @@ bool VMToOSInterface::ReleaseRWMapping(void* address, size_t size) {
                 // uses the explicit flush hook when it keeps a view cached.
                 armDCacheFlush(reinterpret_cast<void*>(c->writable), c->size);
                 armICacheInvalidate(reinterpret_cast<void*>(c->primary), c->size);
-                if (--c->references == 0) UnmapOwner(c);
+                if (--c->references == 0) UnmapWritable(c);
             }
             return true;
         }
@@ -297,7 +287,7 @@ extern "C" bool LibnxFlushCodeMemory(const void* address, size_t size) {
     }
     for (Chunk* c = r->chunks; c; c = c->next) {
         if (!Overlaps(page, bytes, c->primary, c->size)) continue;
-        if (c->ownerMapped) armDCacheFlush(reinterpret_cast<void*>(c->writable), c->size);
+        if (c->writableMapped) armDCacheFlush(reinterpret_cast<void*>(c->writable), c->size);
         armICacheInvalidate(reinterpret_cast<void*>(c->primary), c->size);
     }
     return true;

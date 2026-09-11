@@ -47,7 +47,8 @@ for unit in [source / 'main.cpp', repo / 'src/coreclr/minipal/libnx/doublemappin
 target = output / 'coreclr-exec-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
                 '-specs=' + str(devkitpro / 'libnx/switch.specs'), '-g', '-Wl,--gc-sections',
-                '-Wl,--wrap=svcCreateCodeMemory', '-Wl,--wrap=svcControlCodeMemory',
+                '-Wl,--wrap=svcMapProcessCodeMemory', '-Wl,--wrap=svcMapProcessMemory',
+                '-Wl,--wrap=svcSetProcessMemoryPermission',
                 '-Wl,-Map,' + str(target.with_suffix('.map')), *objects,
                 '-L' + str(devkitpro / 'libnx/lib'), '-lnx', '-o', str(target.with_suffix('.elf'))], check=True)
 subprocess.run([str(devkitpro / 'tools/bin/nacptool'), '--create', 'CoreCLR executable memory',

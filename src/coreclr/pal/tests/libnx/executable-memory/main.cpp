@@ -4,6 +4,7 @@
 extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/result.h>
+#include <switch/runtime/env.h>
 }
 #include <atomic>
 #include <initializer_list>
@@ -13,25 +14,30 @@ extern "C" { unsigned __nx_applet_exit_mode = 1; }
 static FILE* output;
 // Link-time wrappers inject one failure at the Horizon boundary; successful
 // operations still use the real kernel. Production allocator has no test hooks.
-static std::atomic<int> failCreate{0}, failOwner{0}, failSlave{0};
+static std::atomic<int> failCodeMap{0}, failWritable{0}, failPermission{0};
 static bool injected(std::atomic<int>& counter) {
     int value = counter.load();
     return value > 0 && counter.fetch_sub(1) == 1;
 }
-extern "C" Result __real_svcCreateCodeMemory(Handle*, void*, u64);
-extern "C" Result __real_svcControlCodeMemory(Handle, CodeMapOperation, void*, u64, u64);
-extern "C" Result __wrap_svcCreateCodeMemory(Handle* handle, void* source, u64 size) {
-    if (injected(failCreate)) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    Result rc = __real_svcCreateCodeMemory(handle, source, size);
-    if (R_FAILED(rc)) fprintf(output, "KERNEL create size=%lu rc=%08x\n", size, rc);
+extern "C" Result __real_svcMapProcessCodeMemory(Handle, u64, u64, u64);
+extern "C" Result __real_svcMapProcessMemory(void*, Handle, u64, u64);
+extern "C" Result __real_svcSetProcessMemoryPermission(Handle, u64, u64, u32);
+extern "C" Result __wrap_svcMapProcessCodeMemory(Handle handle, u64 destination, u64 source, u64 size) {
+    if (injected(failCodeMap)) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+    Result rc = __real_svcMapProcessCodeMemory(handle, destination, source, size);
+    if (R_FAILED(rc)) fprintf(output, "KERNEL map-code size=%lu rc=%08x\n", size, rc);
     return rc;
 }
-extern "C" Result __wrap_svcControlCodeMemory(Handle handle, CodeMapOperation op, void* address, u64 size, u64 permission) {
-    if ((op == CodeMapOperation_MapOwner && injected(failOwner)) ||
-        (op == CodeMapOperation_MapSlave && injected(failSlave)))
-        return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
-    Result rc = __real_svcControlCodeMemory(handle, op, address, size, permission);
-    if (R_FAILED(rc)) fprintf(output, "KERNEL control op=%u address=%p size=%lu perm=%lu rc=%08x\n", unsigned(op), address, size, permission, rc);
+extern "C" Result __wrap_svcMapProcessMemory(void* destination, Handle handle, u64 source, u64 size) {
+    if (injected(failWritable)) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+    Result rc = __real_svcMapProcessMemory(destination, handle, source, size);
+    if (R_FAILED(rc)) fprintf(output, "KERNEL map-writable size=%lu rc=%08x\n", size, rc);
+    return rc;
+}
+extern "C" Result __wrap_svcSetProcessMemoryPermission(Handle handle, u64 address, u64 size, u32 permission) {
+    if (injected(failPermission)) return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+    Result rc = __real_svcSetProcessMemoryPermission(handle, address, size, permission);
+    if (R_FAILED(rc)) fprintf(output, "KERNEL protect size=%lu perm=%u rc=%08x\n", size, permission, rc);
     return rc;
 }
 static std::atomic<unsigned> checks{0};
@@ -113,7 +119,10 @@ int main() {
     output = fopen("sdmc:/switch/coreclr-exec-probe.txt", "w");
     if (!output) return 1;
     setvbuf(output, nullptr, _IONBF, 0);
-    fprintf(output, "BEGIN CoreCLR VMToOSInterface CodeMemory; no managed runtime\n");
+    fprintf(output, "BEGIN CoreCLR VMToOSInterface process mappings; no managed runtime\n");
+    fprintf(output, "HINTS protect=%d map-writable=%d unmap-writable=%d map-code=%d unmap-code=%d own-handle=%d\n",
+        envIsSyscallHinted(0x73), envIsSyscallHinted(0x74), envIsSyscallHinted(0x75),
+        envIsSyscallHinted(0x77), envIsSyscallHinted(0x78), envGetOwnProcessHandle() != INVALID_HANDLE);
     for (unsigned round = 0; round < 8; ++round) {
         void* mapper = nullptr; size_t capacity = 0;
         check(VM::CreateDoubleMemoryMapper(&mapper, &capacity), "create mapper arenas");
@@ -137,14 +146,14 @@ int main() {
         void* writer = VM::GetRWMapping(mapper, p + 4096, 4096, 4096);
         check(writer != nullptr, "failure-test initial writer"); emit(writer, 321);
         check(VM::ReleaseRWMapping(writer, 4096), "publish preexisting function");
-        for (auto* fault : {&failCreate, &failOwner, &failSlave}) {
+        for (auto* fault : {&failCodeMap, &failPermission}) {
             *fault = 2;
             check(!VM::CommitDoubleMappedMemory(p, 12288, true), "second fresh-run failure");
             check(permission(p) == Perm_None && permission(p + 8192) == Perm_None, "fresh runs rolled back");
             check(reinterpret_cast<Function>(p + 4096)() == 321, "commit rollback retains old function");
         }
         check(VM::CommitDoubleMappedMemory(p, 12288, true) == p, "retry commit after rollback");
-        failOwner = 2;
+        failWritable = 2;
         check(!VM::GetRWMapping(mapper, p, 0, 12288), "second writable-object mapping failure");
         // All temporary view maps must have been removed; a fresh request succeeds.
         writer = VM::GetRWMapping(mapper, p, 0, 12288);

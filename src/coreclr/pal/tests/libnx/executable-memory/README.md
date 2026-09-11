@@ -17,9 +17,9 @@ The probe overwrites `sdmc:/switch/coreclr-exec-probe.txt`; preserve any existin
 log before running it.
 
 Eight rounds exercise 2,048 worker allocation lifetimes across 32 threads:
-partial commitment, overlapping idempotent commits, views crossing CodeMemory
-objects, overlapping view references, real final-owner unmapping, unchanged RX
-execution after writer retirement, zero initialization after kernel creation,
+partial commitment, overlapping idempotent commits, views crossing backing
+chunks, overlapping view references, real final-owner unmapping, unchanged RX
+execution after writer retirement, zero initialization after commitment,
 invalid offset/range/protection requests and adjacent RW-data/RX-code layout.
 An emitted PC-relative function reads its adjacent writable data, as required by
 the upstream dynamic interleaved-stub path. A function published by the main
@@ -30,18 +30,24 @@ A mapper closed with live allocations is retired after their final release.
 ## Implementation boundaries
 
 The existing CoreCLR allocator, loader heaps and JIT remain unchanged. The new
-VMToOSInterface implementation uses public libnx CodeMemory and reservation APIs.
-Each mapper owns two 512 MiB virtual arenas; physical backing is allocated only
-on commit. Logical offsets cannot overlap live allocations. Mandatory ranges
-and exact placement are honored **within the owned primary arena**; other
-addresses fail. This is a bounded allocator, not general fixed mmap support.
+VMToOSInterface implementation uses public libnx process-memory SVCs with the
+actual own-process handle supplied by the loader. Each mapper owns two 512 MiB
+virtual arenas; physical backing is allocated only on commit. Logical offsets
+cannot overlap live allocations. Mandatory ranges and exact placement are
+honored **within the owned primary arena**; other addresses fail. This is a
+bounded allocator, not general fixed mmap support.
 
-Each contiguous fresh commit run owns one CodeMemory object. Writable subviews
-map whole objects into the corresponding contiguous writable arena and track
-references per object; the last reference unmaps that object's writable alias.
-The original source heap remains kernel-locked until both mappings are removed
-and the handle is closed. An unrecoverable cleanup error terminates rather than
-freeing mapped/locked backing. Ordinary create/map failures roll back new work.
+Each fresh commit run owns aligned backing mapped through MapProcessCodeMemory
+and protected RX or RW through SetProcessMemoryPermission. Writable subviews
+use MapProcessMemory against the actual RX mapping, tracking references per
+chunk. The last view reference unmaps that chunk's writable alias. The original
+source heap remains kernel-locked until writable aliases and primary mappings
+are removed. The process handle is borrowed and never closed by the allocator.
+An unrecoverable cleanup error terminates rather than freeing mapped/locked
+backing. Ordinary map/protect failures roll back new work.
+
+Process mappings avoid allocating a separate CodeMemory object per fresh
+commit run.
 
 Commitment cannot change the mode of existing chunks. RW views require fully
 committed RX ranges; mixed data/code or uncommitted spans fail. The normal
@@ -52,5 +58,5 @@ is claimed by this native boundary test. PAL-wide VirtualQuery still needs a
 common view of software reservations owned by other platform components.
 
 Original adapter/test code uses official .NET and libnx 4.12 APIs. The public
-libnx implementation and Atmosphere 1.11.2 KCodeMemory/SVC code informed behavior
+libnx implementation and Atmosphere 1.11.2 KCodeMemory/slab/process-memory SVC code informed behavior
 and ownership review; Atmosphere GPL code is not copied into this source.

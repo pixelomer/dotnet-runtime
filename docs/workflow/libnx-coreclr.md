@@ -86,9 +86,9 @@ the output. Permitted CPU count comes from the separate kernel-backed query.
 ## CoreCLR executable allocator integration
 
 The Horizon minipal target selects `minipal/libnx/doublemapping.cpp`.
-Its VMToOSInterface backend uses CodeMemory chunks and paired libnx-reserved
+Its VMToOSInterface backend uses process mappings and paired libnx-reserved
 virtual arenas. Partial commitments and referenced writable subviews retain
-explicit backing and handle ownership. Cache publication resolves the writable
+explicit backing and mapping ownership. Cache publication resolves the writable
 alias even while CoreCLR caches a writer view.
 
 The existing executable allocator and loader heaps are unchanged. A null
@@ -96,3 +96,8 @@ CreateTemplate selects CoreCLR's dynamic interleaved code/data path.
 See the [executable-memory probe](../../src/coreclr/pal/tests/libnx/executable-memory/README.md)
 for build instructions, bounded placement, mode restrictions and ownership
 checks. This native boundary probe does not initialize the managed runtime.
+
+The backend uses MapProcessCodeMemory, SetProcessMemoryPermission and
+MapProcessMemory with the loader-supplied own-process handle. That handle is
+borrowed, not closed by the allocator. This avoids allocating a separate
+CodeMemory object for each fresh commit run.
