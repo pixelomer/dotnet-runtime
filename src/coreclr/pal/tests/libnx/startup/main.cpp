@@ -127,9 +127,18 @@ static void testMemoryProbe() {
     DWORD old;
     check(!VirtualProtect(memory + 4096, 4096, PAGE_READONLY, &old) && GetLastError() == ERROR_NOT_SUPPORTED, "data allocator rejects unsupported protection change");
     check(PAL_ProbeMemory(memory, 8192, FALSE), "readable probe spans both committed pages");
-    static const char readOnly[] = "Horizon read-only probe data";
-    check(PAL_ProbeMemory(const_cast<char*>(readOnly), sizeof(readOnly), FALSE), "resident read-only data is readable");
-    check(!PAL_ProbeMemory(const_cast<char*>(readOnly), sizeof(readOnly), TRUE), "resident read-only data rejects write");
+    alignas(4096) static const unsigned char readOnly[4096] = {0x45};
+    check(PAL_ProbeMemory(const_cast<unsigned char*>(readOnly), sizeof(readOnly), FALSE), "resident read-only data is readable");
+    check(!PAL_ProbeMemory(const_cast<unsigned char*>(readOnly), sizeof(readOnly), TRUE), "resident read-only data rejects write");
+    auto mutableView = const_cast<volatile unsigned char*>(readOnly);
+    for (unsigned life = 0; life < 256; ++life) {
+        check(VirtualProtect(const_cast<unsigned char*>(readOnly), 4096, PAGE_READWRITE, &old) && old == PAGE_READONLY, "enable resident data initialization using kernel permission");
+        mutableView[0] = static_cast<unsigned char>(life);
+        check(VirtualProtect(const_cast<unsigned char*>(readOnly), 4096, PAGE_READONLY, &old) && old == PAGE_READWRITE, "restore resident data read-only protection");
+        check(mutableView[0] == static_cast<unsigned char>(life) && !PAL_ProbeMemory(const_cast<unsigned char*>(readOnly), 4096, TRUE), "resident data retains bytes and rejects writes after initialization");
+    }
+    check(!VirtualProtect(reinterpret_cast<void*>(ModuleProbeFunction), 4, PAGE_READWRITE, &old), "reject destructive writable transition of resident text");
+    check(ModuleProbeFunction(7) == 52, "resident text still executes after rejected transition");
     check(memory[0] == 0x69 && memory[8191] == 0x69, "probe leaves caller bytes unchanged");
     check(!PAL_ProbeMemory(reinterpret_cast<void*>(UINTPTR_MAX - 3), 8, FALSE), "probe rejects address overflow");
     check(PAL_ProbeMemory(nullptr, 0, FALSE), "empty range is vacuously valid");

@@ -3,6 +3,10 @@
 #include "coreclrhost.h"
 extern "C" { unsigned __nx_applet_exit_mode = 1; }
 static FILE* output;
+extern "C" void HostProtectionTrace(void* address, size_t size, unsigned protection, int result, unsigned error)
+{
+    fprintf(output, "VirtualProtect address=%p size=%zu protect=%x result=%d error=%u\n", address, size, protection, result, error);
+}
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
 int main(int argc, char** argv)
 {

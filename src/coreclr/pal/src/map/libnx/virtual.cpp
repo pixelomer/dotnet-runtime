@@ -2,9 +2,11 @@
 namespace CorUnix { class CPalThread; }
 #include "pal/virtual.h"
 #include "pal/mapnative.h"
+#include "pal/modulenative.h"
 #include <errno.h>
 extern "C" {
 #include <switch/kernel/svc.h>
+#include <switch/runtime/env.h>
 #include <switch/kernel/mutex.h>
 #include <switch/result.h>
 #include <libs/Common/nxvm.h>
@@ -225,10 +227,36 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     // emulate NOACCESS by decommit (which must discard the old contents).
     int nativeProtection = protect == PAGE_READWRITE ? MapRead | MapWrite :
         protect == PAGE_EXECUTE_READ ? MapRead | MapExecute : protect == PAGE_READONLY ? MapRead : MapNone;
-    if (!same && NativeProtect(reinterpret_cast<void*>(start), bytes, nativeProtection) != 0 &&
-        (errno != ENOENT || R_FAILED(svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission))))
+    if (!same && NativeProtect(reinterpret_cast<void*>(start), bytes, nativeProtection) != 0)
     {
-        SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
+        if (errno != ENOENT)
+        {
+            SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
+        }
+        Result rc = svcSetMemoryPermission(reinterpret_cast<void*>(start), bytes, permission);
+        if (R_FAILED(rc))
+        {
+            // NRO read-only data starts in code state. Its first write requires
+            // the process-memory API; it then becomes ordinary non-executable
+            // code-data, whose later permissions use SetMemoryPermission.
+            // Restrict this irreversible transition to the NRO's declared data
+            // segment. Text must retain executable capability and use aliases.
+            NativeModuleInfo module;
+            NativeModuleRange ranges[3];
+            if ((permission & Perm_X) ||
+                !NativeModuleFromAddress(reinterpret_cast<void*>(start), &module) ||
+                !NativeModuleRanges(module.base, ranges))
+            {
+                SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
+            }
+            uintptr_t ro = reinterpret_cast<uintptr_t>(ranges[1].start);
+            if (start < ro || start - ro > ranges[1].size || bytes > ranges[1].size - (start - ro))
+            {
+                SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
+            }
+            rc = svcSetProcessMemoryPermission(envGetOwnProcessHandle(), start, bytes, permission);
+            if (R_FAILED(rc)) { SetLastError(ERROR_NOT_SUPPORTED); return FALSE; }
+        }
     }
     *oldProtect = old;
     return TRUE;
