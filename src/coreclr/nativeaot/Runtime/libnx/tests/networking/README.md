@@ -83,3 +83,25 @@ engine owns a background thread. The native socket layer skips unsupported
 close-on-exec operations on Horizon; it does not provide exec inheritance.
 
 Connect and accept are blocking; the send/receive timeouts do not bound them.
+
+## Socket buffer capacity and native control
+
+The managed launcher sets `sb_efficiency=8` for its socket workload.
+libnx multiplies the configured socket-buffer sum by this value when allocating
+BSD transfer memory.
+
+The [native control](native-control/) exercises matching TCP/UDP transfers,
+half-close and socket close order without a managed runtime. From this directory:
+
+```sh
+SOCKET_EFFICIENCY=4 bash native-control/build.sh
+SOCKET_EFFICIENCY=8 bash native-control/build.sh
+```
+
+It uses the devkitPro toolchain and libnx installation selected by `DEVKITPRO`.
+Outputs are under `artifacts/libnx-native-networking-control/` at the runtime
+root. Each build uses the same output names; preserve any outputs you need
+before rebuilding. The control writes `sdmc:/switch/native-networking-control.txt`.
+A failure returns immediately and relies on process teardown for remaining open
+sockets; this is not a recovery-after-exhaustion test. As in the managed probe,
+connect and accept are blocking despite the send/receive timeouts.

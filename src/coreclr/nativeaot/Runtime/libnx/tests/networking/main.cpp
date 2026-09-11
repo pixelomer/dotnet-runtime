@@ -54,8 +54,13 @@ int main()
     if(!f) return 1;
     fprintf(f,"BEGIN NativeAOT Horizon managed networking\n"); fclose(f);
     if (!initialize_icu()) return 1;
-    Result sockets = socketInitializeDefault();
+    // Increase BSD transfer-memory capacity for the socket churn workload.
+    // sb_efficiency scales the configured socket-buffer allocation.
+    SocketInitConfig config = *socketGetDefaultInitConfig();
+    config.sb_efficiency = 8;
+    Result sockets = socketInitialize(&config);
     ProbeReport(0, sockets);
+    ProbeReport(2, config.sb_efficiency);
     if (R_FAILED(sockets)) return 1;
     int result=ManagedNetworkingMain();
     f=fopen("sdmc:/switch/nativeaot-networking-test.txt","a");
