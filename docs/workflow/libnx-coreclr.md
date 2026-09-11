@@ -72,3 +72,13 @@ consumers are outside this PAL's reservation table. The
 [virtual-memory probe](../../src/coreclr/pal/tests/libnx/virtual-memory/README.md)
 exercises shared ownership, quota rollback, zero-filled reuse and query bounds.
 System information uses Horizon's 4096-byte pages and C linkage for libnx APIs.
+
+## Diagnostics and CPU quotas
+
+Static Horizon PAL diagnostics identify their module using the NRO linker base,
+without dynamic-loader APIs. Message formatting and process code do not depend
+on unused POSIX mapping headers; the utility mapping include is Apple-only.
+
+Horizon has no cgroup hierarchy or CPU-bandwidth quota. Cgroup initialization
+and cleanup own no resources, and `PAL_GetCpuLimit` returns FALSE without writing
+the output. Permitted CPU count comes from the separate kernel-backed query.

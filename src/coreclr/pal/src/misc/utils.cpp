@@ -25,7 +25,9 @@ SET_DEFAULT_DEBUG_CHANNEL(MISC); // some headers have code with asserts, so do t
 #include <mach/message.h>
 #endif //HAVE_VM_ALLOCATE
 
+#ifdef __APPLE__
 #include <sys/mman.h>
+#endif
 
 #include "pal/utils.h"
 #include "pal/file.h"

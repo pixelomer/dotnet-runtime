@@ -26,7 +26,6 @@ Revision History:
 #include "errorstrings.h"
 
 #include <stdarg.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <wctype.h>
 

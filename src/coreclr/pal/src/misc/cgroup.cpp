@@ -14,11 +14,18 @@ Abstract:
 #include "pal/dbgmsg.h"
 SET_DEFAULT_DEBUG_CHANNEL(MISC);
 #include "pal/palinternal.h"
+#include "pal/cgroup.h"
+#if defined(TARGET_LIBNX)
+// Horizon has no cgroup hierarchy or CPU-bandwidth quota. Process affinity
+// is reported separately by the kernel-backed PAL CPU-count implementation.
+void InitializeCGroup() {}
+void CleanupCGroup() {}
+BOOL PALAPI PAL_GetCpuLimit(UINT*) { return FALSE; }
+#else
 #include <limits>
 #include <limits.h>
 #include <sys/resource.h>
 #include "pal/virtual.h"
-#include "pal/cgroup.h"
 #include <algorithm>
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/param.h>
@@ -522,3 +529,5 @@ PAL_GetCpuLimit(UINT* val)
 
     return CGroup::GetCpuLimit(val);
 }
+
+#endif // TARGET_LIBNX

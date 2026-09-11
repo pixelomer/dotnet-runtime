@@ -32,7 +32,11 @@ Abstract:
 #include <pthread.h> /* for pthread_self */
 #include <errno.h>
 #include <dirent.h>
+#ifndef TARGET_LIBNX
 #include <dlfcn.h>
+#else
+extern "C" char __start__[];
+#endif
 
 /* <stdarg.h> needs to be included after "palinternal.h" to avoid name
    collision for va_start and va_end */
@@ -405,6 +409,10 @@ void DBG_close_channels()
 
 static const void *DBG_get_module_id()
 {
+#ifdef TARGET_LIBNX
+    // The statically linked PAL belongs to the containing NRO image.
+    return __start__;
+#else
     static const void *s_module_id = NULL;
     if (s_module_id == NULL)
     {
@@ -419,6 +427,7 @@ static const void *DBG_get_module_id()
         }
     }
     return s_module_id;
+#endif
 }
 
 #define MODULE_ID DBG_get_module_id,
