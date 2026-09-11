@@ -47,8 +47,9 @@ running it. Use full application memory. No game data is required.
 
 ## Runtime lifetime
 
-The allocator can alias heap backing only into the kernel stack region, so the
-GC must use that region's capacity rather than the full ASLR range.
+The allocator reserves a dedicated arena inside the kernel stack region before
+native stacks fragment it. GC limits use this arena's actual capacity and
+maximum address; physical commitment is bounded separately by the backing pool.
 
 NativeAOT remains resident until process exit. The launcher sets
 `__nx_applet_exit_mode=1` to request application exit to HOME. Do not return to

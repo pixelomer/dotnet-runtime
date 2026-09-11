@@ -15,6 +15,9 @@ typedef struct {
 bool nxvm_init(size_t backing_bytes);
 // Reuse an existing healthy pool, or initialize the requested default size.
 bool nxvm_ensure_initialized(size_t backing_bytes);
+// Actual dedicated Horizon virtual arena, separate from physical commitment.
+size_t nxvm_virtual_capacity(void);
+uintptr_t nxvm_virtual_max_address(void);
 bool nxvm_destroy(void); // Requires no live reservations; never frees mapped pages.
 void *nxvm_reserve(size_t bytes, size_t alignment);
 bool nxvm_commit(void *address, size_t bytes); // Idempotent; fresh pages are zero.

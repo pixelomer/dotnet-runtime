@@ -12,13 +12,15 @@ typedef struct Region {
     unsigned char *address;
     size_t pages;
     uint32_t *backing; // Pool page index + 1; high bit marks a commit transaction.
-    VirtmemReservation *reservation;
 } Region;
 
 static Mutex lock;
 static unsigned char *pool, *used;
 static size_t pool_pages, used_pages;
-static Region *regions;
+static Region *regions; // Sorted by virtual address within the arena.
+static unsigned char *arena;
+static size_t arena_bytes;
+static VirtmemReservation *arena_reservation;
 static NxvmStats stats;
 
 static bool valid_size(size_t n) { return n && !(n & (PAGE - 1)); }
@@ -71,6 +73,26 @@ static bool initialize_locked(size_t backing_bytes) {
     unsigned char *p = aligned_alloc(PAGE, backing_bytes);
     unsigned char *u = calloc(backing_bytes / PAGE, 1);
     if (!p || !u) { free(p); free(u); goto end; }
+    // Claim virtual space before PAL/GC workers scatter their native stacks
+    // through the same Horizon region. Commitment remains independently bounded
+    // by the backing pool. libnx's reservation keeps native stacks out.
+    u64 stack_bytes;
+    if (R_FAILED(svcGetInfo(&stack_bytes, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)) ||
+        backing_bytes > SIZE_MAX / 2) { free(p); free(u); goto end; }
+    size_t wanted = backing_bytes * 2;
+    const size_t minimum = (size_t)64 << 20;
+    if (wanted < minimum) wanted = minimum;
+    if (wanted > stack_bytes / 2) wanted = (stack_bytes / 2) & ~(PAGE - 1);
+    virtmemLock();
+    for (size_t bytes = wanted; bytes >= minimum; bytes = (bytes / 2) & ~(PAGE - 1)) {
+        void *base = virtmemFindStack(bytes, PAGE);
+        if (!base) continue;
+        arena_reservation = virtmemAddReservation(base, bytes);
+        if (arena_reservation) { arena = base; arena_bytes = bytes; }
+        break;
+    }
+    virtmemUnlock();
+    if (!arena_reservation) { free(p); free(u); goto end; }
     pool = p; used = u; pool_pages = backing_bytes / PAGE; used_pages = 0;
     stats = (NxvmStats){ .capacity = backing_bytes };
     ok = true;
@@ -94,39 +116,56 @@ bool nxvm_destroy(void) {
     mutexLock(&lock);
     bool ok = pool && !regions && !used_pages && !stats.poisoned;
     if (ok) {
+        virtmemLock(); virtmemRemoveReservation(arena_reservation); virtmemUnlock();
+        arena_reservation = NULL; arena = NULL; arena_bytes = 0;
         free(pool); free(used); pool = used = NULL; pool_pages = 0;
         stats = (NxvmStats){0};
     }
     mutexUnlock(&lock); return ok;
 }
 
+static uintptr_t align_address(uintptr_t address, size_t alignment) {
+    return address > UINTPTR_MAX - (alignment - 1) ? 0 :
+        (address + alignment - 1) & ~(uintptr_t)(alignment - 1);
+}
+
 void *nxvm_reserve(size_t bytes, size_t alignment) {
     if (!alignment) alignment = PAGE;
-    if (!valid_size(bytes) || alignment < PAGE || (alignment & (alignment - 1)) ||
-        bytes > SIZE_MAX - (alignment - PAGE)) return NULL;
+    if (!valid_size(bytes) || alignment < PAGE || (alignment & (alignment - 1))) return NULL;
     mutexLock(&lock);
     Region *r = NULL; void *result = NULL;
     if (!pool || stats.poisoned || bytes > SIZE_MAX - stats.reserved) goto end;
+    uintptr_t address = align_address((uintptr_t)arena + PAGE, alignment);
+    uintptr_t end = (uintptr_t)arena + arena_bytes - PAGE;
+    Region **link = &regions;
+    // Keep an inaccessible page between independent reservations. Sorted first
+    // fit reuses retired holes and avoids quadratic rescanning of live ranges.
+    for (; *link; link = &(*link)->next) {
+        if (!address || address > end || bytes > end - address) goto end;
+        uintptr_t next = (uintptr_t)(*link)->address;
+        if (address + bytes <= next - PAGE) break;
+        address = align_address(next + (*link)->pages * PAGE + PAGE, alignment);
+    }
+    if (!address || address > end || bytes > end - address) goto end;
     r = calloc(1, sizeof(*r));
     if (!r) goto end;
     r->pages = bytes / PAGE;
     r->backing = calloc(r->pages, sizeof(uint32_t));
-    if (!r->backing) goto fail;
-    virtmemLock();
-    void *raw = virtmemFindStack(bytes + alignment - PAGE, PAGE);
-    if (raw && (uintptr_t)raw <= UINTPTR_MAX - (alignment - 1)) {
-        r->address = (void *)(((uintptr_t)raw + alignment - 1) & ~(alignment - 1));
-        r->reservation = virtmemAddReservation(r->address, bytes);
-    }
-    virtmemUnlock();
-    if (!r->reservation) goto fail;
-    r->next = regions; regions = r;
+    if (!r->backing) { free(r); goto end; }
+    r->address = (void *)address;
+    r->next = *link; *link = r;
     stats.reserved += bytes; stats.reservations++;
     result = r->address;
-    goto end;
-fail:
-    free(r->backing); free(r);
 end:
+    mutexUnlock(&lock); return result;
+}
+
+size_t nxvm_virtual_capacity(void) {
+    mutexLock(&lock); size_t result = arena_bytes; mutexUnlock(&lock); return result;
+}
+uintptr_t nxvm_virtual_max_address(void) {
+    mutexLock(&lock);
+    uintptr_t result = arena ? (uintptr_t)arena + arena_bytes - 1 : 0;
     mutexUnlock(&lock); return result;
 }
 
@@ -178,7 +217,6 @@ bool nxvm_release(void *address, size_t bytes) {
     Region **link = &regions;
     while (*link != r) link = &(*link)->next;
     *link = r->next;
-    virtmemLock(); virtmemRemoveReservation(r->reservation); virtmemUnlock();
     stats.reserved -= bytes; stats.reservations--;
     free(r->backing); free(r);
 end:

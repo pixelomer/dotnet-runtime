@@ -20,6 +20,23 @@ int main() {
     setvbuf(output, nullptr, _IONBF, 0);
     fprintf(output, "BEGIN shared NativeAOT/CoreCLR GC OS boundary; no managed execution\n");
     check(GCToOSInterface::Initialize(), "initialize shared GC OS interface");
+    size_t arenaBytes = nxvm_virtual_capacity();
+    check(arenaBytes >= (size_t(64) << 20) && GCToOSInterface::GetVirtualMemoryLimit() == arenaBytes, "GC limit is actual dedicated arena");
+    size_t largeBytes = arenaBytes / 2;
+    auto large = static_cast<uint8_t*>(GCToOSInterface::VirtualReserve(largeBytes, 8192, VirtualReserveFlags::None, NUMA_NODE_UNDEFINED));
+    check(large != nullptr && uintptr_t(large) + largeBytes - 1 <= nxvm_virtual_max_address(), "region-sized sparse reservation fits actual arena");
+    check(GCToOSInterface::VirtualCommit(large, 4096, NUMA_NODE_UNDEFINED) &&
+          GCToOSInterface::VirtualCommit(large + largeBytes - 4096, 4096, NUMA_NODE_UNDEFINED), "commit distant ends without materializing sparse range");
+    large[0] = 1; large[largeBytes - 1] = 2;
+    check(nxvm_stats().committed == 8192 && large[0] + large[largeBytes - 1] == 3, "physical commitment is independent of reserved capacity");
+    check(GCToOSInterface::VirtualRelease(large, largeBytes), "retire region-sized reservation");
+    void* holes[3];
+    for (auto& hole : holes) { hole = nxvm_reserve(8192, 65536); check(hole != nullptr, "reserve aligned arena holes"); }
+    check(nxvm_release(holes[1], 8192), "retire middle arena reservation");
+    void* reused = nxvm_reserve(8192, 65536);
+    check(reused == holes[1], "sorted allocator reuses a retired aligned hole");
+    check(nxvm_release(holes[2], 8192) && nxvm_release(holes[0], 8192) && nxvm_release(reused, 8192), "retire reservations out of allocation order");
+    fprintf(output, "ARENA bytes=%zu sparse_reservation=%zu\n", arenaBytes, largeBytes);
     uint64_t mask, pid;
     check(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0) == 0, "query actual allowed CPU mask");
     check(svcGetProcessId(&pid, CUR_PROCESS_HANDLE) == 0 && GCToOSInterface::GetCurrentProcessId() == pid, "GC process identity");

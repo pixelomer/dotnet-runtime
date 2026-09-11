@@ -69,7 +69,7 @@ objects += ['-Wl,--start-group', *[str(build / p) for p in archives], *[str(icu/
 target = output / 'coreclr-host-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
                 '-specs=' + str(libnx_root / 'switch.specs'), '-g', '-Wl,--gc-sections',
-                '-Wl,-Map,' + str(target.with_suffix('.map')), '-Wl,--eh-frame-hdr', '-Wl,--wrap=VirtualProtect', '-Wl,--export-dynamic-symbol=coreclr_initialize',
+                '-Wl,-Map,' + str(target.with_suffix('.map')), '-Wl,--eh-frame-hdr', '-Wl,--wrap=VirtualProtect', '-Wl,--wrap=virtmemFindStack', '-Wl,--export-dynamic-symbol=coreclr_initialize',
                 '-Wl,-T,' + str(repo / 'src/coreclr/nativeaot/Runtime/libnx/unwind-sections.ld'), *objects,
                 '-L' + str(libnx_root / 'lib'), '-lnx', '-o', str(target.with_suffix('.elf'))], check=True)
 subprocess.run([str(devkitpro / 'tools/bin/nacptool'), '--create', 'CoreCLR embedded host',

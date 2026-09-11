@@ -7,6 +7,9 @@ extern "C" void HostProtectionTrace(void* address, size_t size, unsigned protect
 {
     fprintf(output, "VirtualProtect address=%p size=%zu protect=%x result=%d error=%u\n", address, size, protection, result, error);
 }
+extern "C" void LibnxRuntimeDiagnostic(const char* text) { fprintf(output, "NATIVE: %s\n", text); }
+extern "C" void HostStackReservationTrace(size_t size, void* result) { fprintf(output, "StackReservation size=%zu result=%p\n", size, result); }
+extern "C" void HostDumpStackMap();
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
 int main(int argc, char** argv)
 {
@@ -29,6 +32,7 @@ int main(int argc, char** argv)
     const char* values[] = {"/switch/coreclr-probe", "/switch/coreclr-probe/System.Private.CoreLib.dll", "true"};
     int result = coreclr_initialize(argv[0], "Horizon CoreCLR probe", 3, keys, values, &host, &domain);
     fprintf(output, "coreclr_initialize result=%08x host=%p domain=%u\n", result, host, domain);
+    if (result < 0) HostDumpStackMap();
     if (result >= 0) {
         unsigned exit_code = 0;
         result = coreclr_execute_assembly(host, domain, 0, nullptr, "/switch/coreclr-probe/Probe.dll", &exit_code);

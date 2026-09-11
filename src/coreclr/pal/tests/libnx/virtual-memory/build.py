@@ -35,6 +35,7 @@ output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS']
 objects = []
 for unit in [source / 'main.cpp', repo / 'src/coreclr/pal/src/map/libnx/virtual.cpp',
+             repo / 'src/coreclr/pal/src/loader/libnx/module.cpp',
              repo / 'src/coreclr/pal/src/map/libnx/mapping.cpp',
              repo / 'src/coreclr/pal/src/map/libnx/pread.c',
              repo / 'src/native/libs/Common/nxvm.c', repo / 'src/coreclr/pal/src/misc/error.cpp',

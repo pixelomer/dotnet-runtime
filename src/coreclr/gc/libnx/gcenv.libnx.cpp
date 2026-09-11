@@ -129,15 +129,13 @@ const AffinitySet* GCToOSInterface::SetGCThreadsAffinitySet(uintptr_t mask, cons
 }
 size_t GCToOSInterface::GetVirtualMemoryLimit()
 {
-    // nxvm can alias heap backing only inside the kernel stack region.
-    // Advertising the full ASLR range makes region GC reserve unusable space.
-    u64 size; CheckResult(svcGetInfo(&size, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)); return size;
+    // The shared allocator owns this arena before native worker stacks fragment
+    // Horizon's stack region. Size GC heuristics from actual reserved capacity.
+    return nxvm_virtual_capacity();
 }
 size_t GCToOSInterface::GetVirtualMemoryMaxAddress()
 {
-    u64 base, size;
-    CheckResult(svcGetInfo(&base, InfoType_StackRegionAddress, CUR_PROCESS_HANDLE, 0));
-    CheckResult(svcGetInfo(&size, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)); return base + size - 1;
+    return nxvm_virtual_max_address();
 }
 uint64_t GCToOSInterface::GetPhysicalMemoryLimit(bool* restricted)
 {
