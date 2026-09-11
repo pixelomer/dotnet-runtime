@@ -1038,13 +1038,27 @@ void* SystemNative_MMap(void* address,
         return NULL;
     }
 
-    if (protection & PAL_PROT_EXEC || fd > 0)
+    size_t bytes;
+    if (!LibnxPageLength(length, &bytes)) return NULL;
+    // A bounded anonymous mapping implementation, not a file/shared mmap shim.
+    // Address hints may be ignored; fixed placement is not an accepted flag.
+    (void)address;
+    if (flags != (PAL_MAP_PRIVATE | PAL_MAP_ANONYMOUS) || fd != -1 || offset != 0 ||
+        (protection != PAL_PROT_NONE && protection != (PAL_PROT_READ | PAL_PROT_WRITE)))
     {
-        errno = EINVAL;
+        errno = ENOTSUP;
         return NULL;
     }
-
-    return malloc(length);
+    if (!nxvm_ensure_initialized((size_t)512 << 20)) { errno = ENOMEM; return NULL; }
+    void* result = nxvm_reserve(bytes, 4096);
+    if (!result) { errno = ENOMEM; return NULL; }
+    if (protection != PAL_PROT_NONE && !nxvm_commit(result, bytes))
+    {
+        if (!nxvm_release(result, bytes)) abort();
+        errno = ENOMEM;
+        return NULL;
+    }
+    return result;
 }
 #endif
 
@@ -1057,7 +1071,11 @@ int32_t SystemNative_MUnmap(void* address, uint64_t length)
     }
 
 #if defined(TARGET_LIBNX)
-    free(address);
+    size_t bytes;
+    if (!LibnxPageLength(length, &bytes)) return -1;
+    // Reject partial/foreign releases instead of passing arbitrary addresses
+    // to free. The shared manager retains ownership on failed kernel unmaps.
+    if (!nxvm_release(address, bytes)) { errno = EINVAL; return -1; }
     return 0;
 #else
     return munmap(address, (size_t)length);
@@ -1073,12 +1091,17 @@ int32_t SystemNative_MProtect(void* address, uint64_t length, int32_t protection
     }
 
 #if defined(TARGET_LIBNX)
-    if (protection & PAL_PROT_EXEC)
+    size_t bytes;
+    if (!LibnxPageLength(length, &bytes)) return -1;
+    // Stack-state aliases cannot be reprotected. NONE -> RW commits zeroed
+    // pages; RW -> RW preserves contents. Do not emulate RW -> NONE by
+    // decommitting, because mprotect is required to preserve the old contents.
+    if (protection != (PAL_PROT_READ | PAL_PROT_WRITE))
     {
-        errno = EINVAL;
+        errno = ENOTSUP;
         return -1;
     }
-
+    if (!nxvm_commit(address, bytes)) { errno = ENOMEM; return -1; }
     return 0;
 #else
     protection = ConvertMMapProtection(protection);

@@ -1,6 +1,14 @@
 #pragma once
 #include <pthread.h>
 #include <sys/iosupport.h>
+#include "../Common/nxvm.h"
+
+static bool LibnxPageLength(uint64_t length, size_t* rounded)
+{
+    if (!length || length > SIZE_MAX - 4095) { errno = EINVAL; return false; }
+    *rounded = ((size_t)length + 4095) & ~(size_t)4095;
+    return true;
+}
 
 // libnx/newlib has no positional I/O syscall. Serialize regular-file position
 // operations within System.Native, including duplicated descriptors. Descriptor

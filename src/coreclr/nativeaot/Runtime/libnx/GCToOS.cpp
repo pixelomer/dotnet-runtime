@@ -41,7 +41,7 @@ bool GCToOSInterface::Initialize()
     if (!s_cpuCount) return false;
     // Explicit bounded backing budget; failure is real OOM, not an unbounded
     // malloc-backed substitute for virtual reservation. Configuration is pending.
-    if (!nxvm_init(size_t(512) << 20)) return false;
+    if (!nxvm_ensure_initialized(size_t(512) << 20)) return false;
     return true;
 }
 void GCToOSInterface::Shutdown()
