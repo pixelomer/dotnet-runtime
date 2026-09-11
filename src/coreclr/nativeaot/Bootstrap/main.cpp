@@ -1,6 +1,11 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+#ifdef TARGET_LIBNX
+#include "../Runtime/libnx/LibnxDiagnostics.h"
+#else
+#define LibnxTraceStartup(stage) ((void)0)
+#endif
 #include <stdint.h>
 
 //
@@ -179,6 +184,7 @@ extern "C" void __managed__Startup();
 
 static int InitializeRuntime()
 {
+    LibnxTraceStartup("RhInitialize");
     if (!RhInitialize(
 #ifdef NATIVEAOT_DLL
         /* isDll */ true
@@ -191,6 +197,7 @@ static int InitializeRuntime()
     void * osModule = PalGetModuleHandleFromPointer((void*)&NATIVEAOT_ENTRYPOINT);
 
     // TODO: pass struct with parameters instead of the large signature of RhRegisterOSModule
+    LibnxTraceStartup("RegisterOSModule");
     if (!RhRegisterOSModule(
         osModule,
         (void*)&__managedcode_a, (uint32_t)((char *)&__managedcode_z - (char*)&__managedcode_a),
@@ -200,10 +207,12 @@ static int InitializeRuntime()
         return -1;
     }
 
+    LibnxTraceStartup("InitializeModules");
     InitializeModules(osModule, __modules_a, (int)((__modules_z - __modules_a)), (void **)&c_classlibFunctions, _countof(c_classlibFunctions));
 
 #ifdef NATIVEAOT_DLL
     // Run startup method immediately for a native library
+    LibnxTraceStartup("ManagedStartup");
     __managed__Startup();
 #endif // NATIVEAOT_DLL
 

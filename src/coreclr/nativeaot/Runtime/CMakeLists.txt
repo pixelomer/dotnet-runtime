@@ -156,8 +156,9 @@ else()
   list(APPEND COMMON_RUNTIME_SOURCES ${GC_DIR}/unix/events.cpp)
   list(APPEND FULL_RUNTIME_SOURCES unix/UnwindHelpers.cpp unix/UnixNativeCodeManager.cpp)
   if(CLR_CMAKE_TARGET_LIBNX)
-    list(APPEND FULL_RUNTIME_SOURCES libnx/LibnxContext.cpp)
+    list(APPEND FULL_RUNTIME_SOURCES libnx/LibnxContext.cpp libnx/LibnxExceptions.cpp libnx/LibnxExceptions.S)
     list(APPEND COMMON_RUNTIME_SOURCES
+      ${CLR_DIR}/../native/libs/Common/pal_threading_libnx.c
       libnx/PalRedhawkLibnx.cpp libnx/LibnxPlatform.c libnx/LibnxThreads.c libnx/GCToOS.cpp libnx/nxvm.c)
     # Horizon uses its own exception and suspension adapters instead of Linux
     # cgroups, NUMA, signal handlers and the subprocess crash dumper.

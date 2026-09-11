@@ -24,6 +24,7 @@
 
 #if defined(TARGET_LIBNX)
 #define PTHREAD_STACK_MIN 0x1000
+#include "../Common/pal_threading_libnx.h"
 #include <switch.h>
 #endif
 
@@ -222,6 +223,10 @@ void SystemNative_LowLevelMonitor_Signal_Release(LowLevelMonitor* monitor)
 
 int32_t SystemNative_CreateThread(uintptr_t stackSize, void *(*startAddress)(void*), void *parameter)
 {
+#if defined(TARGET_LIBNX)
+    if (stackSize && stackSize < PTHREAD_STACK_MIN) stackSize = PTHREAD_STACK_MIN;
+    return LibnxCreateDetachedThread(stackSize, startAddress, parameter) == 0;
+#else
     bool result = false;
     pthread_attr_t attrs;
 
@@ -265,6 +270,7 @@ CreateThreadExit:
     assert(error == 0);
 
     return result;
+#endif
 }
 
 int32_t SystemNative_SchedGetCpu(void)

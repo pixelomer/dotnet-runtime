@@ -13,6 +13,7 @@
 #include "config.h"
 #include "UnixHandle.h"
 #include <pthread.h>
+#include "../../../../native/libs/Common/pal_threading_libnx.h"
 #include "gcenv.h"
 #include "gcenv.ee.h"
 #include "gcconfig.h"
@@ -575,12 +576,7 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalStartBackgroundWork(BackgroundCallback 
     // Scheduling policy tuning is pending. Preserve the pthread default priority.
     BackgroundWork* work = new (nothrow) BackgroundWork{callback, context};
     if (work == nullptr) return false;
-    pthread_attr_t attrs;
-    if (pthread_attr_init(&attrs) != 0) { delete work; return false; }
-    int st = pthread_attr_setdetachstate(&attrs, PTHREAD_CREATE_DETACHED);
-    pthread_t thread;
-    if (st == 0) st = pthread_create(&thread, &attrs, BackgroundWorkEntry, work);
-    pthread_attr_destroy(&attrs);
+    int st = LibnxCreateDetachedThread(0, BackgroundWorkEntry, work);
     if (st != 0) delete work;
     return st == 0;
 }

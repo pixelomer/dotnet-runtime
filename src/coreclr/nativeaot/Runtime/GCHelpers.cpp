@@ -1,6 +1,11 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+#ifdef TARGET_LIBNX
+#include "libnx/LibnxDiagnostics.h"
+#else
+#define LibnxTraceStartup(stage) ((void)0)
+#endif
 //
 // Unmanaged helpers exposed by the System.GC managed class.
 //
@@ -57,6 +62,7 @@ bool InitializeGC()
         GetRuntimeInstance()->EnableConservativeStackReporting();
     }
 
+    LibnxTraceStartup("GCHeapUtilities");
     HRESULT hr = GCHeapUtilities::InitializeGC();
     if (FAILED(hr))
         return false;
@@ -68,14 +74,17 @@ bool InitializeGC()
     volatile void* _dummy = g_gcDacGlobals;
 
     // Initialize the GC subsystem.
+    LibnxTraceStartup("GCHeapInitialize");
     hr = g_pGCHeap->Initialize();
     if (FAILED(hr))
         return false;
 
+    LibnxTraceStartup("Finalization");
     if (!RhInitializeFinalization())
         return false;
 
     // Initialize HandleTable.
+    LibnxTraceStartup("HandleManager");
     if (!GCHandleUtilities::GetGCHandleManager()->Initialize())
         return false;
 

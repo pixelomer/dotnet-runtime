@@ -74,6 +74,8 @@ if(CLR_CMAKE_TARGET_LIBNX)
     ${RUNTIME_DIR}/disabledeventtrace.cpp
     ${RUNTIME_DIR}/disabledruntimeeventinternal.cpp
     ${GEN_EVENTPIPE_PLAT_AGNOSTIC_DISABLED_SOURCES})
+  # Export the upstream disabled managed diagnostic API without enabling the server.
+  target_compile_definitions(eventpipe-disabled PRIVATE FEATURE_PERFTRACING)
   add_dependencies(eventpipe-disabled aot_eventing_headers)
   install_static_library(eventpipe-disabled aotsdk nativeaot)
   return()

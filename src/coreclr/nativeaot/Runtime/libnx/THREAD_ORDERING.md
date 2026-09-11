@@ -79,3 +79,7 @@ relocation, finalization or background/server GC.
 pause/resume, store-buffer ordering and concurrent registration lifetimes.
 These checks complement the ordering argument; they do not establish managed
 GC correctness.
+
+The [managed stress workload](tests/managed/README.md) exercises compacting
+collections with call-free managed loops, concurrent exceptions, TLS and
+finalizers. It does not broaden the ordering contract to other kernels.

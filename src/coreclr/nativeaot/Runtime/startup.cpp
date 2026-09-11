@@ -1,5 +1,11 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
+
+#ifdef TARGET_LIBNX
+#include "libnx/LibnxDiagnostics.h"
+#else
+#define LibnxTraceStartup(stage) ((void)0)
+#endif
 #include "common.h"
 #ifdef HOST_WINDOWS
 #include <windows.h>
@@ -70,7 +76,13 @@ typedef size_t GSCookie;
 
 #ifdef FEATURE_READONLY_GS_COOKIE
 
+#ifdef TARGET_LIBNX
+// The final linker script isolates this input in a writable 4 KiB data page.
+// Initialization then applies actual read-only protection to that page alone.
+#define READONLY_ATTR __attribute__((section(".nx_gscookie"), aligned(4096)))
+#else
 #define READONLY_ATTR __attribute__((section(".rodata")))
+#endif
 
 // const is so that it gets placed in the .text section (which is read-only)
 // volatile is so that accesses to it do not get optimized away because of the const
@@ -95,10 +107,12 @@ static bool InitDLL(HANDLE hPalInstance)
     //
     // Initialize interface dispatch.
     //
+    LibnxTraceStartup("InterfaceDispatch");
     if (!InitializeInterfaceDispatch())
         return false;
 #endif
 
+    LibnxTraceStartup("GCEventLock");
     InitializeGCEventLock();
 
 #ifdef FEATURE_PERFTRACING
@@ -115,12 +129,14 @@ static bool InitDLL(HANDLE hPalInstance)
     //
     // Initialize support for registering GC and HandleTable callouts.
     //
+    LibnxTraceStartup("RestrictedCallouts");
     if (!RestrictedCallouts::Initialize())
         return false;
 
     //
     // Initialize RuntimeInstance state
     //
+    LibnxTraceStartup("RuntimeInstance");
     if (!RuntimeInstance::Initialize(hPalInstance))
         return false;
 
@@ -149,6 +165,7 @@ static bool InitDLL(HANDLE hPalInstance)
 
     STARTUP_TIMELINE_EVENT(NONGC_INIT_COMPLETE);
 
+    LibnxTraceStartup("GC");
     if (!InitializeGC())
         return false;
 
@@ -162,11 +179,13 @@ static bool InitDLL(HANDLE hPalInstance)
 #endif
 
 #ifndef USE_PORTABLE_HELPERS
+    LibnxTraceStartup("CPUFeatures");
     if (!DetectCPUFeatures())
         return false;
 #endif
 
 #ifdef TARGET_UNIX
+    LibnxTraceStartup("GSCookie");
     if (!InitGSCookie())
         return false;
 #endif
@@ -360,6 +379,7 @@ void RuntimeThreadShutdown(void* thread)
 
 extern "C" bool RhInitialize(bool isDll)
 {
+    LibnxTraceStartup("PalInit");
     if (!PalInit())
         return false;
 
@@ -379,10 +399,12 @@ extern "C" bool RhInitialize(bool isDll)
     g_safeToShutdownTracing = !isDll;
 #endif
 
+    LibnxTraceStartup("InitDLL");
     if (!InitDLL(PalGetModuleHandleFromPointer((void*)&RhInitialize)))
         return false;
 
     // Populate the values needed for debugging
+    LibnxTraceStartup("DebugHeaders");
     PopulateDebugHeaders();
 
     return true;

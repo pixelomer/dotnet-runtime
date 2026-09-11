@@ -1,6 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+#ifdef TARGET_LIBNX
+#include "libnx/LibnxDiagnostics.h"
+#endif
 #include "common.h"
 
 #include "gcenv.h"
@@ -562,6 +565,15 @@ static bool CreateNonSuspendableThread(void (*threadStart)(void*), void* arg, co
 
             realStartRoutine(realContext);
 
+#ifdef TARGET_LIBNX
+            // These workers never joined ThreadStore or installed its pthread
+            // destructor. Release their registered handle and private contexts
+            // before pthread closes the borrowed kernel handle on return.
+            Thread* finished = ThreadStore::RawGetCurrentThread();
+            finished->SetDetached();
+            finished->Destroy();
+#endif
+
             return 0;
         };
 
@@ -762,6 +774,9 @@ bool GCToEEInterface::GetIntConfigValue(const char* privateKey, const char* publ
 
 void GCToEEInterface::LogErrorToHost(const char *message)
 {
+#ifdef TARGET_LIBNX
+    LibnxTraceStartup(message);
+#endif
 }
 
 bool GCToEEInterface::GetStringConfigValue(const char* privateKey, const char* publicKey, const char** value)

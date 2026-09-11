@@ -29,6 +29,7 @@
 #include "GcEnum.h"
 #ifdef TARGET_LIBNX
 #include "libnx/LibnxThreads.h"
+#include "libnx/LibnxExceptions.h"
 #include "unix/UnixContext.h"
 #endif
 
@@ -295,6 +296,7 @@ void Thread::Construct()
     m_libnxPauseContext = new (nothrow) NATIVE_CONTEXT{};
     if (m_libnxPauseContext == nullptr) RhFailFast();
     m_libnxPaused = false;
+    if (!LibnxInitializeExceptionState()) RhFailFast();
 #endif
 
     if (!PalGetMaximumStackBounds(&m_pStackLow, &m_pStackHigh))
@@ -378,6 +380,7 @@ void Thread::Destroy()
     if (m_libnxPaused) RhFailFast();
     delete m_libnxPauseContext;
     m_libnxPauseContext = nullptr;
+    LibnxDestroyExceptionState();
 #endif
 
     if (m_hPalThread != INVALID_HANDLE_VALUE)

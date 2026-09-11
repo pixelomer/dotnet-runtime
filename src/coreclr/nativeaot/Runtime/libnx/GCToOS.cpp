@@ -1,12 +1,16 @@
 // Horizon GC OS interface backed by bounded data-only memory reservations.
 #include "common.h"
+#include "LibnxDiagnostics.h"
+#include <cstdio>
 #include "gcenv.structs.h"
 #include "gcenv.base.h"
 #include "gcenv.os.h"
 #include "gcenv.unix.inl"
+extern "C" {
 #include <switch/kernel/svc.h>
 #include <switch/result.h>
 #include <switch/arm/counter.h>
+}
 #include <pthread.h>
 #include <cstdlib>
 extern "C" {
@@ -48,6 +52,11 @@ void GCToOSInterface::Shutdown()
 }
 void* GCToOSInterface::VirtualReserve(size_t size, size_t alignment, uint32_t flags, uint16_t node)
 {
+    if (LibnxRuntimeDiagnostic) {
+        char text[128];
+        snprintf(text,sizeof(text),"GCReserve size=%zu align=%zu flags=%u node=%u",size,alignment,flags,node);
+        LibnxTraceStartup(text);
+    }
     if (flags != VirtualReserveFlags::None || node != NUMA_NODE_UNDEFINED) return nullptr;
     size = PageSize(size);
     return size ? nxvm_reserve(size, alignment ? alignment : 4096) : nullptr;
@@ -104,13 +113,15 @@ const AffinitySet* GCToOSInterface::SetGCThreadsAffinitySet(uintptr_t mask, cons
 }
 size_t GCToOSInterface::GetVirtualMemoryLimit()
 {
-    u64 size; CheckResult(svcGetInfo(&size, InfoType_AslrRegionSize, CUR_PROCESS_HANDLE, 0)); return size;
+    // nxvm can alias heap backing only inside the kernel stack region.
+    // Advertising the full ASLR range makes region GC reserve unusable space.
+    u64 size; CheckResult(svcGetInfo(&size, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)); return size;
 }
 size_t GCToOSInterface::GetVirtualMemoryMaxAddress()
 {
     u64 base, size;
-    CheckResult(svcGetInfo(&base, InfoType_AslrRegionAddress, CUR_PROCESS_HANDLE, 0));
-    CheckResult(svcGetInfo(&size, InfoType_AslrRegionSize, CUR_PROCESS_HANDLE, 0)); return base + size - 1;
+    CheckResult(svcGetInfo(&base, InfoType_StackRegionAddress, CUR_PROCESS_HANDLE, 0));
+    CheckResult(svcGetInfo(&size, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)); return base + size - 1;
 }
 uint64_t GCToOSInterface::GetPhysicalMemoryLimit(bool* restricted)
 {

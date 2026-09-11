@@ -50,6 +50,7 @@ if (CLR_CMAKE_TARGET_WASI)
     )
 elseif (CLR_CMAKE_TARGET_LIBNX)    
     list (APPEND NATIVE_SOURCES
+        ../Common/pal_threading_libnx.c
         pal_dynamicload_wasi.c
         pal_mount_wasi.c
         pal_networking.c
