@@ -64,3 +64,45 @@ extern "C" int PALAPI __wrap_WideCharToMultiByte(UINT page, DWORD flags, LPCWSTR
     SetLastError(error);
     return result;
 }
+
+// Diagnostic host only: observe native termination without changing its result.
+extern "C" void __real_abort() __attribute__((noreturn));
+extern "C" void __real_exit(int) __attribute__((noreturn));
+extern "C" void __real__exit(int) __attribute__((noreturn));
+static void TraceTermination(const char* operation, int code)
+{
+    char text[180];
+    snprintf(text, sizeof(text), "%s code=%d", operation, code);
+    LibnxRuntimeDiagnostic(text);
+    uintptr_t* frame = static_cast<uintptr_t*>(__builtin_frame_address(0));
+    for (unsigned i = 0; i < 48 && frame; ++i) {
+        MemoryInfo info; uint32_t page;
+        uintptr_t address = reinterpret_cast<uintptr_t>(frame);
+        if ((address & 15) || svcQueryMemory(&info, &page, address) || !(info.perm & Perm_R) ||
+            address < info.addr || address - info.addr > info.size || info.size - (address - info.addr) < 16) break;
+        snprintf(text, sizeof(text), "NativeFrame %u return=%llx", i, (unsigned long long)frame[1]);
+        LibnxRuntimeDiagnostic(text);
+        auto next = reinterpret_cast<uintptr_t*>(frame[0]);
+        if (next <= frame) break;
+        frame = next;
+    }
+}
+extern "C" void __wrap_abort() { TraceTermination("abort", 0); __real_abort(); }
+extern "C" void __wrap_exit(int code) { TraceTermination("exit", code); __real_exit(code); }
+extern "C" void __wrap__exit(int code) { TraceTermination("_exit", code); __real__exit(code); }
+
+#include "../../../src/exception/libnx/exceptions.h"
+extern "C" void __real_PAL_LibnxBeginException(LibnxExceptionState*) __attribute__((noreturn));
+extern "C" void __wrap_PAL_LibnxBeginException(LibnxExceptionState* state)
+{
+    char text[220];
+    snprintf(text, sizeof(text), "NativeFault pc=%llx lr=%llx sp=%llx far=%llx esr=%x desc=%x",
+        (unsigned long long)state->context.pc.x, (unsigned long long)state->context.lr,
+        (unsigned long long)state->context.sp, (unsigned long long)state->far, state->esr, state->description);
+    LibnxRuntimeDiagnostic(text);
+    for (unsigned i = 0; i < 29; ++i) {
+        snprintf(text, sizeof(text), "NativeRegister x%u=%llx", i, (unsigned long long)state->context.cpu_gprs[i].x);
+        LibnxRuntimeDiagnostic(text);
+    }
+    __real_PAL_LibnxBeginException(state);
+}

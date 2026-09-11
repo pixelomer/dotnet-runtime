@@ -269,3 +269,17 @@ lexical dot/parent normalization operates on their rooted tail, preserving the
 device prefix even at the root. Directory creation uses the same test.
 The startup probe checks mounted/default-device paths, missing-file errors and
 PAL open/read/close against a separate input whose native writer is closed first.
+
+## Native file descriptor ownership
+
+PAL mapping and standard-stream handles duplicate the native file description
+through libsysbase's reference-counted dup. The Horizon adapter normalizes a
+failed duplication with no errno to EMFILE. It does not use socket fcntl for
+file duplication or configure nonexistent close-on-exec state. Explicit
+inherited handles are unsupported.
+
+The startup probe exercises shared file-cursor preservation and mapping/view
+lifetimes after the original file or mapping handle closes. Use its documented
+libnx revision, which makes unsupported fcntl operations return -1 with errno.
+The embedded host traces file/conversion failures, native termination and
+exception state without replacing the underlying operation.

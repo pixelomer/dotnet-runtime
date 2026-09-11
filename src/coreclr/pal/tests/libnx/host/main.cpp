@@ -29,7 +29,7 @@ int main(int argc, char** argv)
         setvbuf(stderr, nullptr, _IONBF, 0);
     if (freopen("sdmc:/switch/coreclr-host-stdout.txt", "w", stdout))
         setvbuf(stdout, nullptr, _IONBF, 0);
-    fprintf(output, "BEGIN embedded CoreCLR host\n");
+    fprintf(output, "BEGIN embedded CoreCLR host initialize=%p\n", reinterpret_cast<void*>(coreclr_initialize));
     if (argc < 1 || !argv[0]) { fprintf(output, "FAIL missing loader executable path\n"); return 1; }
     // The filesystem FIFO debugger transport is explicitly unsupported.
     // Exercise ordinary runtime startup with the upstream opt-out setting.
