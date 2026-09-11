@@ -18,3 +18,8 @@ serialization/deserialization and concurrent metadata access while requesting
 compacting collections. Worker tasks are awaited. This is a shared-context
 probe, not coverage of arbitrary type metadata, multi-context initialization or
 native interop. No renderer, game data or FMOD dependency is required.
+
+Cold initialization uses gated worker tasks racing the main thread to the
+first generated metadata request before the sequential checks. Workers perform
+empty-list deserialization and request compacting collections. This shared-context
+race does not reproduce arbitrary multi-context startup.

@@ -18,6 +18,22 @@ static class JsonProbe
     public static int Main()
     {
         try {
+            // Cold initialization: the first metadata requests come from four
+            // threads, before the sequential checks warm reflection caches.
+            using var gate=new ManualResetEventSlim(false);
+            Task[] cold=new Task[3];
+            for(int worker=0;worker<cold.Length;worker++) cold[worker]=Task.Run(()=> {
+                gate.Wait();
+                for(int i=0;i<100;i++) {
+                    var coldInfo=ModelContext.Default.ListModel;
+                    _=JsonSerializer.Deserialize("[]",coldInfo);
+                    GC.Collect(2,GCCollectionMode.Forced,true,true);
+                }
+            });
+            gate.Set();
+            var mainColdInfo=ModelContext.Default.ListModel;
+            Task.WaitAll(cold);
+            ProbeReport(0,1);
             ProbeReport(1,1);
             var hash=new HashCode(); hash.Add(false);hash.Add("text");hash.Add(new object());
             ProbeReport(2,hash.ToHashCode());
