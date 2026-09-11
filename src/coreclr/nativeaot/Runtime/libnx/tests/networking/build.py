@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the Horizon managed networking object, then link only Horizon native libraries."""
 from pathlib import Path
-import os,subprocess,re,shutil,json,hashlib,argparse
+import os,subprocess,re,shutil,json,hashlib,argparse,struct
 import xml.etree.ElementTree as ET
 here=Path(__file__).resolve().parent
 repo=here.parents[6]
@@ -64,7 +64,16 @@ cmd=[str(dkp/'devkitA64/bin/aarch64-none-elf-g++'),*flags,str(here/'main.cpp'),s
 with (out/'link.log').open('w') as log:subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,check=True)
 romfs=out/'romfs';romfs.mkdir(exist_ok=True)
 shutil.copy2(icu/'share/icu/77.1/icudt77l.dat',romfs/'icudt77l.dat')
-subprocess.run([str(dkp/'tools/bin/elf2nro'),str(out/'nativeaot-networking-test.elf'),str(out/'nativeaot-networking-test.nro'),'--romfsdir='+str(romfs)],check=True)
+subprocess.run([str(dkp/'tools/bin/nacptool'),'--create','NativeAOT Networking','Runtime Probe','0.1.0',str(out/'control.nacp')],check=True)
+subprocess.run([str(dkp/'tools/bin/elf2nro'),str(out/'nativeaot-networking-test.elf'),str(out/'nativeaot-networking-test.nro'),'--nacp='+str(out/'control.nacp'),'--romfsdir='+str(romfs)],check=True)
+# Include a NACP asset alongside RomFS and verify the actual asset header.
+# A successful conversion alone does not establish that ICU data is embedded.
+blob=(out/'nativeaot-networking-test.nro').read_bytes()
+core_size=struct.unpack_from('<I',blob,0x18)[0]
+if len(blob)<core_size+56:raise SystemExit('NRO asset section missing')
+magic,version,icon_offset,icon_size,nacp_offset,nacp_size,romfs_offset,romfs_size=struct.unpack_from('<4sI6Q',blob,core_size)
+if magic!=b'ASET' or nacp_size!=16384 or romfs_size<(romfs/'icudt77l.dat').stat().st_size or core_size+romfs_offset+romfs_size>len(blob):
+    raise SystemExit('NRO does not contain the expected ICU RomFS asset')
 inputs=[*sorted(sdk.glob('*.dll')),obj,sdk/'libRuntime.WorkstationGC.a',sdk/'libbootstrapperdll.o',
         sdk/'libeventpipe-disabled.a',sdk/'libstandalonegc-disabled.a',
         *sorted(libs.glob('*.a')),out/'nativeaot-networking-test.nro',out/'switch.ld',out/'switch.specs',romfs/'icudt77l.dat']
