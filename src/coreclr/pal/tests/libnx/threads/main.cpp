@@ -69,13 +69,22 @@ static void batch(bool legacy, unsigned round) {
     check(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0, "CoreCLR detached attribute");
     for (unsigned i=0; i<4; ++i) {
         states[i].explicitExit = (i & 1) != 0;
-        int error = legacy ? LibnxCreateDetachedThread(256*1024, worker, &states[i]) :
+        size_t requested = (128 + i * 64) * 1024;
+        check(pthread_attr_setstacksize(&attr, requested) == 0, "vary requested stack allocation");
+        int error = legacy ? LibnxCreateDetachedThread(requested, worker, &states[i]) :
             LibnxCreateDetachedThreadWithAttributes(&identities[i], &attr, worker, &states[i]);
         check(error == 0, "create reaped worker");
     }
     for (unsigned i=0; i<4; ++i) {
         wait(states[i].ready);
-        check(reinterpret_cast<uintptr_t>(states[i].high) - reinterpret_cast<uintptr_t>(states[i].low) >= 256*1024, "requested stack capacity retained");
+        size_t usable = reinterpret_cast<uintptr_t>(states[i].high) - reinterpret_cast<uintptr_t>(states[i].low);
+        size_t firstUsable = reinterpret_cast<uintptr_t>(states[0].high) - reinterpret_cast<uintptr_t>(states[0].low);
+        // libnx reserves its bootstrap arguments above the usable stack. Verify
+        // exact changes in requested capacity without inventing those private
+        // bytes as stack space or hard-coding the bootstrap structure's layout.
+        check(usable > 64*1024 && usable <= (128 + i*64)*1024 && usable == firstUsable + i*64*1024,
+            "usable stack capacity follows exact requested increments");
+        if (round == 0) fprintf(output, "STACK requested=%u usable=%zu\n", (128+i*64)*1024, usable);
         if (!legacy) {
             int original = kernelPriority(identities[i]);
             check(!NativeSetThreadPriority(identities[i], 3) && kernelPriority(identities[i]) == original, "invalid priority leaves kernel unchanged");
