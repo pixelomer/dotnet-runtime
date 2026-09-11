@@ -228,3 +228,44 @@ not a managed runtime.
 EventPipe selects its existing TCP transport with the default listener disabled
 on Horizon. GNU sincos declarations are enabled only for the arithmetic target,
 without changing feature visibility globally.
+
+## Embedded CoreCLR host
+
+The embedded host links the production VM, RyuJIT, GC and PAL. The static link
+interface includes the GC map encoder and compression library. Build matching
+CoreLib from the same checkout; the [host probe](../../src/coreclr/pal/tests/libnx/host/README.md)
+documents the pinned SDK, ICU and staged-libnx prerequisites.
+
+PAL_ProbeMemory checks mapped spans and permissions without mutating caller
+bytes. Named shared objects fail before creating files; unnamed mutexes keep
+their process-local implementation. The filesystem FIFO debugger transport
+rejects unsupported create/connect requests. The host uses the existing
+DOTNET_EnableDiagnostics_Debugger opt-out.
+
+VirtualProtect can initialize data in the resident NRO's declared read-only
+segment through SetProcessMemoryPermission. After the first code-to-data
+transition, ordinary memory-permission operations apply. Executable text is
+excluded from that irreversible transition and retains its execute capability.
+Host-only tracing preserves the original PAL operations and last-error value.
+
+## Dedicated shared virtual arena
+
+nxvm reserves an arena before native worker stacks fragment Horizon's stack
+region. A libnx reservation excludes competing stack allocations; sorted
+first-fit placement reuses aligned holes with guard gaps. Physical commitment
+remains bounded separately by the backing pool. Arena sizing starts at twice
+the backing budget, with a 64 MiB minimum and a cap of half the stack region,
+then tries smaller sizes by halving. Initialization fails if none can be
+reserved. GC limits come from the actual arena capacity and maximum address.
+
+The GC OS probe covers sparse commitments and aligned hole reuse. The
+[managed stress probe](../../src/coreclr/nativeaot/Runtime/libnx/tests/managed/README.md)
+provides a source-build recipe for exercising the NativeAOT runtime and BCL.
+
+## Device-qualified PAL paths
+
+The shared root test recognizes device-qualified absolute paths. Existing
+lexical dot/parent normalization operates on their rooted tail, preserving the
+device prefix even at the root. Directory creation uses the same test.
+The startup probe checks mounted/default-device paths, missing-file errors and
+PAL open/read/close against a separate input whose native writer is closed first.

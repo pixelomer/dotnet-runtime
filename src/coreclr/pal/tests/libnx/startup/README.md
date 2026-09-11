@@ -40,3 +40,12 @@ with the resident-module adapter.
 The shared nxvm backing pool, synchronization worker, native reaper and PAL
 caches have process lifetime. The probe covers native PAL startup and shutdown,
 not managed CoreCLR initialization, managed GC/JIT/EH, runtime unload or restart.
+
+The probe also checks PAL_ProbeMemory across committed, uncommitted, retired and
+overflowed ranges without changing caller bytes. Named mutexes fail explicitly;
+unnamed mutexes retain their normal ownership and synchronization.
+
+Resident read-only data initialization/restoration uses the actual kernel
+code-to-data transition within that NRO segment. Attempts to make executable
+text writable are rejected. The separate GC/data-pool protection limitation
+remains explicit.
