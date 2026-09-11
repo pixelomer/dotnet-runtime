@@ -49,7 +49,10 @@ they are outputs, not prebuilt prerequisites.
 
 The native host initializes BSD with sb_efficiency=8 and retains it through
 process exit for the background socket engine. It uses a 120-second watchdog.
-Managed result 100 indicates completed checks. Use full application memory.
+Managed result 100 indicates completed checks. The native poll wrapper also
+checks the idle unread-data interval and reports result 112 for excessive calls,
+independently of managed completion; see the CoreCLR host guide above.
+Use full application memory.
 
 The host overwrites `/switch/nativeaot-async-sockets.txt`,
 `/switch/nativeaot-async-sockets-stderr.txt` and

@@ -6,7 +6,16 @@
 extern "C" { unsigned __nx_applet_exit_mode = 1; int ManagedSocketMain(uintptr_t); }
 static FILE* output;
 static int complete;
+static bool excessivePolls;
+extern "C" void HostSocketPollBegin();
+extern "C" uint64_t HostSocketPollEnd();
 static void Report(int phase, int value) {
+    if (phase == 85) HostSocketPollBegin();
+    if (phase == 86) {
+        uint64_t calls = HostSocketPollEnd();
+        fprintf(output, "POLL_IDLE calls=%llu window_ms=%d\n", (unsigned long long)calls, value);
+        excessivePolls |= calls > 100;
+    }
     fprintf(output, "MANAGED phase=%d value=%d native_used=%d\n", phase, value, mallinfo().uordblks);
 }
 static void* Watchdog(void*) {
@@ -35,6 +44,7 @@ int main() {
     int result = ManagedSocketMain(reinterpret_cast<uintptr_t>(Report));
     __atomic_store_n(&complete, 1, __ATOMIC_RELEASE);
     pthread_join(watchdog, nullptr);
+    if (excessivePolls) { fprintf(output, "FAIL excessive idle socket polls\n"); result = 112; }
     fprintf(output, "END result=%d\n", result);
     fclose(output);
     // Background managed polling owns BSD until process exit.

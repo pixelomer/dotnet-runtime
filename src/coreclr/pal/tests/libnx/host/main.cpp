@@ -15,7 +15,10 @@ extern "C" {
 #ifdef HOST_SOCKET_PROBE
 extern "C" {
 #include <switch.h>
+void HostSocketPollBegin();
+uint64_t HostSocketPollEnd();
 }
+static bool excessiveSocketPolls;
 #endif
 #ifdef HOST_SUSPENSION_PROBE
 static int suspensionControl[4]; // stop, timed out, armed generation (-1 exits), completed generation
@@ -69,6 +72,14 @@ extern "C" void HostFileTrace(const uint16_t* path, void* result, unsigned error
     if (output) fprintf(output, "CreateFile path=%s result=%p error=%u\n", text, result, error);
 }
 extern "C" void HostManagedProgress(int phase, int value) {
+#ifdef HOST_SOCKET_PROBE
+    if (phase == 85) HostSocketPollBegin();
+    if (phase == 86) {
+        uint64_t calls = HostSocketPollEnd();
+        fprintf(output, "POLL_IDLE calls=%llu window_ms=%d\n", (unsigned long long)calls, value);
+        excessiveSocketPolls |= calls > 100;
+    }
+#endif
     if (output) fprintf(output, "MANAGED phase=%d value=%d\n", phase, value);
 #ifdef HOST_SUSPENSION_PROBE
     if (phase == 50) {
@@ -167,6 +178,9 @@ int main(int argc, char** argv)
 #ifdef HOST_BCL_PROBE
         __atomic_store_n(&bclComplete, 1, __ATOMIC_RELEASE);
         pthread_join(bclWatchdog, nullptr);
+#endif
+#ifdef HOST_SOCKET_PROBE
+        if (excessiveSocketPolls) { fprintf(output, "FAIL excessive idle socket polls\n"); exit_code = 112; }
 #endif
         fprintf(output, "coreclr_execute_assembly result=%08x exit=%u\n", result, exit_code);
         int latched_exit = 0;

@@ -96,3 +96,23 @@ The [CoreCLR host](../../src/coreclr/pal/tests/libnx/host/README.md) and
 compile the same loopback workload: queued writes under backpressure, async
 accept/connect/send/receive, cancellation and close with descriptor reuse.
 These bounded scenarios do not establish all socket lifetime or idle behavior.
+
+## Queued-operation polling and generated GC control flow
+
+The shared socket adapter selects read/write interests only when the respective
+operation queue is nonempty. Registered sockets with no queued operation are
+omitted from the poll call; when none remain, the engine sleeps before taking
+a fresh snapshot. Level-triggered unread data therefore does not make an idle
+registration spin. New operations are picked up on the next bounded iteration.
+
+Both socket hosts link SocketPollTrace.cpp, which counts calls while forwarding
+every poll unchanged. The shared workload cancels a read, leaves a byte unread
+for a bounded interval, then verifies that the byte remains available.
+The native host reports excessive polling separately from the managed result.
+
+The CoreCLR host's suspension-flows workload emits mutually tail-calling
+DynamicMethods and an irreducible loop. Four workers retain object and interior
+roots across compacting collections. The workload checks root contents,
+relocation and bounded worker shutdown under the native suspension watchdog.
+It uses the source-built framework and supports FullOpts and MinOpts.
+See the [host recipe](../../src/coreclr/pal/tests/libnx/host/README.md).

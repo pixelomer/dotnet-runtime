@@ -51,10 +51,15 @@ archives += [icu/'lib'/name for name in ('libicui18n.a', 'libicuuc.a', 'libicuda
 archives += [build/'_deps/fetchzlibng-build/libz.a']
 archives += [build/'_deps/brotli-build'/name for name in ('libbrotlienc.a', 'libbrotlidec.a', 'libbrotlicommon.a')]
 elf, nro = out/'nativeaot-async-sockets.elf', out/'nativeaot-async-sockets.nro'
-cmd = [str(dkp/'devkitA64/bin/aarch64-none-elf-g++'), '-g', '-O2', '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE', '-ffunction-sections', '-fdata-sections', '-fno-rtti', '-fno-exceptions', '-D__SWITCH__', '-I'+str(libnx/'include'), str(here/'main.cpp'), str(obj), str(sdk/'libbootstrapperdll.o'), '-specs='+str(out/'switch.specs'), '-Wl,--eh-frame-hdr,-Map,'+str(out/'sockets.map'), '-Wl,--start-group', *map(str, archives), '-L'+str(libnx/'lib'), '-lnx', '-Wl,--end-group', '-o', str(elf)]
+cmd = [str(dkp/'devkitA64/bin/aarch64-none-elf-g++'), '-g', '-O2', '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE', '-ffunction-sections', '-fdata-sections', '-fno-rtti', '-fno-exceptions', '-D__SWITCH__', '-I'+str(libnx/'include'), str(here/'main.cpp'), str(shared.with_name('SocketPollTrace.cpp')), '-Wl,--wrap=poll', str(obj), str(sdk/'libbootstrapperdll.o'), '-specs='+str(out/'switch.specs'), '-Wl,--eh-frame-hdr,-Map,'+str(out/'sockets.map'), '-Wl,--start-group', *map(str, archives), '-L'+str(libnx/'lib'), '-lnx', '-Wl,--end-group', '-o', str(elf)]
 (out/'link-command.json').write_text(json.dumps(cmd, indent=2)+'\n')
 with (out/'link.log').open('w') as log: subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=True)
 subprocess.run([str(dkp/'tools/bin/elf2nro'), str(elf), str(nro)], check=True)
-inputs = [sockets, shared, here/'Entry.cs', here/'main.cpp', here/'build.py', obj, sdk/'libbootstrapperdll.o', *archives, *sorted(sdk.glob('*.dll')), libnx/'lib/libnx.a', nro]
-(out/'manifest.json').write_text(json.dumps({'runtime_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(), 'ilc_version': '10.0.12', 'sdk': str(sdk), 'inline_linux_tls': False, 'il_warnings': False, 'sha256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}}, indent=2)+'\n')
+inputs = [sockets, shared, shared.with_name('SocketPollTrace.cpp'), here/'Entry.cs', here/'main.cpp', here/'build.py', obj, sdk/'libbootstrapperdll.o', *archives, *sorted(sdk.glob('*.dll')), libnx/'lib/libnx.a', nro]
+linked = {}
+for line in (out/'sockets.map').read_text().splitlines():
+    if line.startswith('LOAD '):
+        path = Path(line[5:].strip())
+        if path.is_file(): linked[str(path.resolve())] = hashlib.sha256(path.read_bytes()).hexdigest()
+(out/'manifest.json').write_text(json.dumps({'runtime_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(), 'ilc_version': '10.0.12', 'sdk': str(sdk), 'linked_input_sha256': linked, 'inline_linux_tls': False, 'il_warnings': False, 'sha256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}}, indent=2)+'\n')
 print(nro)

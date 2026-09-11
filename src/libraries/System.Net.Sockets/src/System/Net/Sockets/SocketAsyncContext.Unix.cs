@@ -1270,6 +1270,7 @@ namespace System.Net.Sockets
         internal int GlobalContextIndex = -1;
 
 #if TARGET_LIBNX
+        internal bool HasPendingReads => !_receiveQueue.IsEmpty;
         internal bool HasPendingWrites => !_sendQueue.IsEmpty;
 #endif
 

@@ -146,3 +146,31 @@ directory as described above.
 
 The [NativeAOT counterpart](../../../../nativeaot/Runtime/libnx/tests/networking-async/README.md)
 uses the same SocketProbe.cs and explicitly selects the Horizon socket assembly.
+
+The socket suite also leaves an unread byte on an idle registered socket for
+750 ms, then checks that it can still receive that byte. SocketPollTrace.cpp
+counts native poll calls while forwarding every call unchanged. More than
+100 calls in that interval produces native host result 112 independently of
+managed exit. Read that host result as well as the runtime's latched shutdown
+code.
+
+## Generated suspension control flow
+
+After the libs.sfx framework build above, select the generated-loop workload:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/host/build.py \
+  --probe suspension-flows --output artifacts/libnx-coreclr-suspension-flows
+```
+
+It uses Reflection.Emit to generate mutual tail-call cycles and an irreducible
+loop. Four workers retain live object/interior references during up to 32
+compacting collections. Exit 100 requires preserved root contents, at least
+one observed relocation and no suspension watchdog timeout; timeout returns
+101. Workers must also terminate within their bounded joins.
+
+Use `--minopts` for minimum-optimization code generation and `--jit-trace` to
+inspect actual loop and tail-call lowering. This variant disables tiered
+compilation and uses both the suspension and overall native watchdogs.
+Deploy its complete managed directory after each build. Compiler warning
+CS0649 for Root.Value reflects field writes emitted dynamically by the probe.

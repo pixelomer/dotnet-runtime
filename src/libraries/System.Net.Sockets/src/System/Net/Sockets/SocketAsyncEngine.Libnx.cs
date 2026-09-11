@@ -207,6 +207,7 @@ namespace System.Net.Sockets
         {
             Interop.PollEvent[] events;
             SocketAsyncContextWrapper[] registrations;
+            int eventCount = 0;
             lock (_handleList)
             {
                 events = new Interop.PollEvent[_handleList.Count];
@@ -214,17 +215,24 @@ namespace System.Net.Sockets
                 for (int i = 0; i < events.Length; i++)
                 {
                     SocketAsyncContextWrapper registration = _handleToContextMap[_handleList[i]];
-                    registrations[i] = registration;
-                    events[i] = new Interop.PollEvent
+                    bool read = registration.Context.HasPendingReads;
+                    bool write = registration.Context.HasPendingWrites;
+                    // poll is level-triggered: unread data must not spin an
+                    // idle engine when the application has no queued read.
+                    // An operation queued after this snapshot is picked up on
+                    // the next bounded iteration, just like a later write.
+                    if (!read && !write) continue;
+                    registrations[eventCount] = registration;
+                    events[eventCount++] = new Interop.PollEvent
                     {
                         FileDescriptor = (int)_handleList[i],
-                        Events = Interop.PollEvents.POLLIN | Interop.PollEvents.POLLERR | Interop.PollEvents.POLLHUP |
-                            (registration.Context.HasPendingWrites ? Interop.PollEvents.POLLOUT : 0)
+                        Events = Interop.PollEvents.POLLERR | Interop.PollEvents.POLLHUP |
+                            (read ? Interop.PollEvents.POLLIN : 0) | (write ? Interop.PollEvents.POLLOUT : 0)
                     };
                 }
             }
 
-            if (events.Length == 0)
+            if (eventCount == 0)
             {
                 Thread.Sleep(50);
                 return false;
@@ -236,7 +244,7 @@ namespace System.Net.Sockets
                 // Queueing an operation does not register a new socket. Refresh
                 // interests after EVERY bounded poll, including a timeout, or
                 // a later write can be stranded behind a read-only snapshot.
-                Interop.Error error = Interop.Sys.Poll(eventsPtr, (uint)events.Length, 60, &triggered);
+                Interop.Error error = Interop.Sys.Poll(eventsPtr, (uint)eventCount, 60, &triggered);
                 if (error != Interop.Error.SUCCESS)
                 {
                     if (error == Interop.Error.EBADF || error == Interop.Error.EAGAIN || error == Interop.Error.EINTR)
@@ -247,7 +255,7 @@ namespace System.Net.Sockets
 
             bool enqueuedEvent = false;
             int populatedEvents = 0;
-            for (int i = 0; i < events.Length; ++i)
+            for (int i = 0; i < eventCount; ++i)
             {
                 Interop.PollEvent e = events[i];
                 if ((short)e.TriggeredEvents == 0 ||

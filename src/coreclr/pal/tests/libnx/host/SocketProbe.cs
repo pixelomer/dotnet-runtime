@@ -108,11 +108,30 @@ internal static class SocketProbe
             Report(83, round);
         }
     }
+    private static async Task IdleUnreadData()
+    {
+        using var listener = Listener();
+        using var client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        client.Connect(listener.LocalEndPoint);
+        using var server = listener.Accept();
+        byte[] data = new byte[1];
+        using var cancellation = new CancellationTokenSource(50);
+        try { await client.ReceiveAsync(data, SocketFlags.None, cancellation.Token); throw new InvalidOperationException("Read did not cancel"); }
+        catch (OperationCanceledException) { }
+        Check(server.Send(new byte[] { 71 }) == 1, "Idle payload send failed");
+        await Task.Delay(100);
+        Report(85, 0);
+        await Task.Delay(750);
+        Report(86, 750);
+        Check(await client.ReceiveAsync(data, SocketFlags.None).WaitAsync(TimeSpan.FromSeconds(5)) == 1 && data[0] == 71,
+            "Unread payload was not preserved");
+    }
     public static int Main(string[] args)
     {
         reporter = (nuint)ulong.Parse(args[0]);
         Run(80, "Queued write after an idle read registration", LateWrite);
         Run(82, "Async accept/connect/send/receive/cancel/close", AsyncRoundTrips);
+        Run(87, "Idle registered socket with unread data", IdleUnreadData);
         Report(89, failures);
         return failures == 0 ? 100 : 110;
     }

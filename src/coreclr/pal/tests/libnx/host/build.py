@@ -42,7 +42,7 @@ parser.add_argument('--jit-trace', action='store_true')
 parser.add_argument('--framework', type=Path, help='Override compatible source-built framework assemblies')
 parser.add_argument('--corelib', type=Path, help='Override CoreLib for explicit compatibility controls')
 parser.add_argument('--minopts', action='store_true', help='Exercise minimum-optimization JIT code generation')
-parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets'], default='basic')
+parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows'], default='basic')
 args = parser.parse_args()
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
@@ -64,16 +64,19 @@ output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS'] + ['-I' + str(repo/'src/coreclr/hosts/inc')]
 if args.jit_trace:
     compile_flags += ["-DHOST_JIT_TRACE"]
-if args.probe == 'suspension':
+if args.probe in ('suspension', 'suspension-flows'):
     compile_flags += ['-DHOST_SUSPENSION_PROBE']
-if args.probe in ('bcl', 'sockets'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows'):
     compile_flags += ['-DHOST_BCL_PROBE']
 if args.probe == 'sockets':
     compile_flags += ['-DHOST_SOCKET_PROBE']
 if args.minopts:
     compile_flags += ['-DHOST_MINOPTS']
 objects = []
-for unit in [source / 'main.cpp', source / 'trace.cpp']:
+units = [source / 'main.cpp', source / 'trace.cpp']
+if args.probe == 'sockets':
+    units.append(source / 'SocketPollTrace.cpp')
+for unit in units:
     obj = output / (unit.stem + '.o')
     unit_flags = compile_flags if unit.suffix == '.cpp' else flags['ASM_DEFINES'] + flags['ASM_INCLUDES'] + flags['ASM_FLAGS']
     subprocess.run([str(compiler), *unit_flags, '-c', str(unit), '-o', str(obj)], check=True)
@@ -95,6 +98,8 @@ archives = [
     '_deps/brotli-build/libbrotlicommon.a',
 ]
 icu = Path(os.environ['ICU_NX_INSTALL_DIR'])
+if args.probe == 'sockets':
+    objects.append('-Wl,--wrap=poll')
 objects += ['-Wl,--start-group', *[str(build / p) for p in archives], *[str(icu/'lib'/p) for p in ['libicui18n.a', 'libicuuc.a', 'libicudata.a']], '-Wl,--end-group']
 target = output / 'coreclr-host-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
@@ -117,7 +122,7 @@ if managed.exists():
     shutil.rmtree(managed)
 managed.mkdir()
 references = []
-if args.probe in ('bcl', 'sockets'):
+if args.probe in ('bcl', 'sockets', 'suspension-flows'):
     framework = args.framework or repo / 'artifacts/bin/runtime/net10.0-libnx-Release-arm64'
     if not (framework / 'System.Runtime.dll').is_file():
         parser.error('Build libs.sfx for CoreCLR/libnx before the BCL probe')
@@ -131,7 +136,7 @@ sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
 subprocess.run([str(repo/'.dotnet/dotnet'), str(repo/'.dotnet/sdk'/sdk/'Roslyn/bincore/csc.dll'),
                 '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
                 '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
-                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs'}[args.probe])], check=True)
+                str(source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs'}[args.probe])], check=True)
 with (output/'qcall-validation.json').open('w') as result:
     subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
                     str(target.with_suffix('.elf'))], stdout=result, check=True)
@@ -146,17 +151,17 @@ for line in target.with_suffix('.map').read_text().splitlines():
         path = Path(line[5:].strip())
         if path.is_file():
             linked_inputs[str(path.resolve())] = digest(path)
-managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs'}[args.probe]
+managed_source = source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs'}[args.probe]
 snapshot = output/'source-snapshot'
 if snapshot.exists():
     shutil.rmtree(snapshot)
 snapshot.mkdir()
-for path in [Path(__file__), source/'main.cpp', source/'trace.cpp', managed_source]:
+for path in [Path(__file__), *units, managed_source]:
     shutil.copyfile(path, snapshot/path.name)
 manifest = {
     'source_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
     'probe': args.probe, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
-    'source_sha256': {str(path.relative_to(repo)): digest(path) for path in [Path(__file__), source/'main.cpp', source/'trace.cpp', managed_source]},
+    'source_sha256': {str(path.relative_to(repo)): digest(path) for path in [Path(__file__), *units, managed_source]},
     'corelib_input': str(corelib),
     'managed_sha256': {path.name: digest(path) for path in sorted(managed.glob('*.dll'))},
     'linked_input_sha256': linked_inputs,
