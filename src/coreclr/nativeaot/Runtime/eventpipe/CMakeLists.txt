@@ -65,6 +65,20 @@ if(CLR_CMAKE_TARGET_WIN32)
 
 endif()
 
+# Keep generated event headers and the explicitly disabled interface on Horizon.
+# Do not build Linux diagnostic sockets or claim eventpipe-enabled support.
+if(CLR_CMAKE_TARGET_LIBNX)
+  add_library(eventpipe-disabled STATIC
+    ${RUNTIME_DIR}/DisabledEventPipeInterface.cpp
+    ${RUNTIME_DIR}/disabledeventpipeinternal.cpp
+    ${RUNTIME_DIR}/disabledeventtrace.cpp
+    ${RUNTIME_DIR}/disabledruntimeeventinternal.cpp
+    ${GEN_EVENTPIPE_PLAT_AGNOSTIC_DISABLED_SOURCES})
+  add_dependencies(eventpipe-disabled aot_eventing_headers)
+  install_static_library(eventpipe-disabled aotsdk nativeaot)
+  return()
+endif()
+
 # EventPipe provider source, currently dotnetruntime provider and helper file
 set(GENERATE_EVENTPIPE_SCRIPT ${CLR_DIR}/scripts/genEventPipe.py)
 set(GENERATE_COMMAND ${Python_EXECUTABLE} ${GENERATE_EVENTPIPE_SCRIPT} --man ${EVENT_MANIFEST} --exc ${EVENT_EXCLUSIONS} --inc ${EVENT_INCLUSION_FILE} --intermediate ${CMAKE_CURRENT_BINARY_DIR} --runtimeflavor nativeaot ${NONEXTERN_ARG})

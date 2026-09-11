@@ -156,7 +156,6 @@ else()
   list(APPEND COMMON_RUNTIME_SOURCES
     unix/PalRedhawkUnix.cpp
     unix/PalCreateDump.cpp
-    ${GC_DIR}/unix/gcenv.unix.cpp
     ${GC_DIR}/unix/numasupport.cpp
     ${GC_DIR}/unix/events.cpp
     ${GC_DIR}/unix/cgroup.cpp
@@ -165,11 +164,18 @@ else()
   list(APPEND FULL_RUNTIME_SOURCES
     unix/cgroupcpu.cpp
     unix/HardwareExceptions.cpp
-    unix/UnixContext.cpp
     unix/UnixSignals.cpp
     unix/UnwindHelpers.cpp
     unix/UnixNativeCodeManager.cpp
   )
+
+  if(CLR_CMAKE_TARGET_LIBNX)
+    list(APPEND FULL_RUNTIME_SOURCES libnx/LibnxContext.cpp)
+    list(APPEND COMMON_RUNTIME_SOURCES libnx/GCToOS.cpp libnx/nxvm.c)
+  else()
+    list(APPEND FULL_RUNTIME_SOURCES unix/UnixContext.cpp)
+    list(APPEND COMMON_RUNTIME_SOURCES ${GC_DIR}/unix/gcenv.unix.cpp)
+  endif()
 
   include(${CLR_SRC_NATIVE_DIR}/external/llvm-libunwind.cmake)
 
@@ -219,7 +225,12 @@ list(APPEND RUNTIME_SOURCES_ARCH_ASM
 convert_to_absolute_path(ARCH_SOURCES_DIR ${ARCH_SOURCES_DIR})
 include_directories(${ARCH_SOURCES_DIR})
 
-if(NOT CLR_CMAKE_TARGET_ARCH_WASM)
+if(CLR_CMAKE_TARGET_LIBNX)
+  # Horizon has no Unix-domain diagnostic server or EventPipe PAL yet.
+  set(FEATURE_PERFTRACING 0)
+  # Retain event declarations/types, implemented by eventpipe-disabled.
+  set(FEATURE_EVENT_TRACE 1)
+elseif(NOT CLR_CMAKE_TARGET_ARCH_WASM)
   set(FEATURE_PERFTRACING 1)
   set(FEATURE_EVENT_TRACE 1)
 endif()
@@ -311,6 +322,6 @@ else()
   add_subdirectory(Portable)
 endif()
 
-if(FEATURE_PERFTRACING)
+if(FEATURE_PERFTRACING OR CLR_CMAKE_TARGET_LIBNX)
   add_subdirectory(eventpipe)
 endif()

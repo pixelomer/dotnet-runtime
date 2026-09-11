@@ -4,7 +4,11 @@
 #ifndef __UNIX_CONTEXT_H__
 #define __UNIX_CONTEXT_H__
 
+#ifdef TARGET_LIBNX
+#include <switch/arm/thread_context.h>
+#else
 #include <ucontext.h>
+#endif
 
 // Convert Unix native context to PAL_LIMITED_CONTEXT
 void NativeContextToPalContext(const void* context, PAL_LIMITED_CONTEXT* palContext);
@@ -21,7 +25,11 @@ uint64_t GetPC(void* context);
 
 struct UNIX_CONTEXT
 {
+#ifdef TARGET_LIBNX
+    ThreadContext ctx;
+#else
     ucontext_t ctx;
+#endif
 
 #ifdef TARGET_ARM64
 

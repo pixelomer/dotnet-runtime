@@ -29,7 +29,7 @@
 #include "yieldprocessornormalized.h"
 #include <minipal/cpufeatures.h>
 
-#ifdef FEATURE_PERFTRACING
+#if defined(FEATURE_PERFTRACING) || defined(FEATURE_EVENT_TRACE)
 #include "EventPipeInterface.h"
 #endif
 
