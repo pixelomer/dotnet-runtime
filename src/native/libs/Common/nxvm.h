@@ -13,6 +13,12 @@ typedef struct {
 } NxvmStats;
 
 bool nxvm_init(size_t backing_bytes);
+// Opt-in data alias backend. Virtual capacity equals backing_bytes (including
+// guard pages), rather than allowing sparse reservations larger than the pool.
+// The backing stays allocated for the pool lifetime; page commitment changes
+// permissions and zeroes fresh pages. Adjacent commits can coalesce in Horizon.
+// Requires an own-process handle and process-code mapping SVCs; no fallback.
+bool nxvm_init_protected(size_t backing_bytes);
 // Reuse an existing healthy pool, or initialize the requested default size.
 bool nxvm_ensure_initialized(size_t backing_bytes);
 // Actual dedicated Horizon virtual arena, separate from physical commitment.

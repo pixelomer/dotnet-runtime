@@ -22,6 +22,8 @@ static unsigned char *arena;
 static size_t arena_bytes;
 static VirtmemReservation *arena_reservation;
 static NxvmStats stats;
+static bool protected_data;
+static Handle process_handle;
 
 static bool valid_size(size_t n) { return n && !(n & (PAGE - 1)); }
 static Region *find_region(void *address, size_t bytes, size_t *offset) {
@@ -49,7 +51,9 @@ static bool unmap_pages(Region *r, size_t first, size_t count, bool new_only) {
         while (i + n < end && r->backing[i + n] &&
                (!new_only || (r->backing[i + n] & NEW_PAGE)) &&
                (r->backing[i + n] & INDEX_MASK) == backing + n + 1) n++;
-        Result rc = svcUnmapMemory(r->address + i * PAGE, pool + backing * PAGE, n * PAGE);
+        Result rc = protected_data ?
+            svcSetMemoryPermission(r->address + i * PAGE, n * PAGE, Perm_None) :
+            svcUnmapMemory(r->address + i * PAGE, pool + backing * PAGE, n * PAGE);
         if (R_FAILED(rc)) {
             stats.last_svc_error = rc;
             // Retain ownership and backing. A partially failed unmap cannot be
@@ -66,26 +70,32 @@ static bool unmap_pages(Region *r, size_t first, size_t count, bool new_only) {
     return true;
 }
 
-static bool initialize_locked(size_t backing_bytes) {
+static bool initialize_locked(size_t backing_bytes, bool data_alias) {
     bool ok = false;
-    if (pool || !valid_size(backing_bytes) || backing_bytes / PAGE >= INDEX_MASK ||
-        !envIsSyscallHinted(0x04) || !envIsSyscallHinted(0x05)) goto end;
+    if (pool || !valid_size(backing_bytes) || backing_bytes / PAGE >= INDEX_MASK) goto end;
+    Handle process = envGetOwnProcessHandle();
+    if (data_alias) {
+        if (process == INVALID_HANDLE || !envIsSyscallHinted(0x02) ||
+            !envIsSyscallHinted(0x73) || !envIsSyscallHinted(0x77) ||
+            !envIsSyscallHinted(0x78)) goto end;
+    } else if (!envIsSyscallHinted(0x04) || !envIsSyscallHinted(0x05)) goto end;
     unsigned char *p = aligned_alloc(PAGE, backing_bytes);
     unsigned char *u = calloc(backing_bytes / PAGE, 1);
     if (!p || !u) { free(p); free(u); goto end; }
     // Claim virtual space before PAL/GC workers scatter their native stacks
     // through the same Horizon region. Commitment remains independently bounded
     // by the backing pool. libnx's reservation keeps native stacks out.
-    u64 stack_bytes;
-    if (R_FAILED(svcGetInfo(&stack_bytes, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0)) ||
+    u64 stack_bytes = 0;
+    if ((!data_alias && R_FAILED(svcGetInfo(&stack_bytes, InfoType_StackRegionSize, CUR_PROCESS_HANDLE, 0))) ||
         backing_bytes > SIZE_MAX / 2) { free(p); free(u); goto end; }
-    size_t wanted = backing_bytes * 2;
-    const size_t minimum = (size_t)64 << 20;
+    size_t wanted = data_alias ? backing_bytes : backing_bytes * 2;
+    const size_t minimum = data_alias ? backing_bytes : (size_t)64 << 20;
     if (wanted < minimum) wanted = minimum;
-    if (wanted > stack_bytes / 2) wanted = (stack_bytes / 2) & ~(PAGE - 1);
+    if (!data_alias && wanted > stack_bytes / 2) wanted = (stack_bytes / 2) & ~(PAGE - 1);
     virtmemLock();
     for (size_t bytes = wanted; bytes >= minimum; bytes = (bytes / 2) & ~(PAGE - 1)) {
-        void *base = virtmemFindStack(bytes, PAGE);
+        void *base = data_alias ? virtmemFindCodeMemory(bytes, PAGE) : virtmemFindStack(bytes, PAGE);
+        if (data_alias && bytes != backing_bytes) break;
         if (!base) continue;
         arena_reservation = virtmemAddReservation(base, bytes);
         if (arena_reservation) { arena = base; arena_bytes = bytes; }
@@ -95,6 +105,28 @@ static bool initialize_locked(size_t backing_bytes) {
     if (!arena_reservation) { free(p); free(u); goto end; }
     pool = p; used = u; pool_pages = backing_bytes / PAGE; used_pages = 0;
     stats = (NxvmStats){ .capacity = backing_bytes };
+    protected_data = data_alias; process_handle = process;
+    if (data_alias) {
+        Result rc = svcMapProcessCodeMemory(process, (uintptr_t)arena, (uintptr_t)pool, backing_bytes);
+        bool mapped = R_SUCCEEDED(rc);
+        if (mapped) rc = svcSetProcessMemoryPermission(process, (uintptr_t)arena, backing_bytes, Perm_Rw);
+        if (R_SUCCEEDED(rc)) rc = svcSetMemoryPermission(arena, backing_bytes, Perm_None);
+        if (R_FAILED(rc)) {
+            stats.last_svc_error = rc;
+            // Never free backing still owned by a failed mapping transaction.
+            if (mapped && R_FAILED(svcUnmapProcessCodeMemory(process, (uintptr_t)arena,
+                                                            (uintptr_t)pool, backing_bytes))) {
+                stats.poisoned = true;
+                goto end;
+            }
+            virtmemLock(); virtmemRemoveReservation(arena_reservation); virtmemUnlock();
+            arena_reservation = NULL; arena = NULL; arena_bytes = 0;
+            free(pool); free(used); pool = used = NULL; pool_pages = 0;
+            protected_data = false; process_handle = INVALID_HANDLE;
+            stats = (NxvmStats){ .last_svc_error = rc };
+            goto end;
+        }
+    }
     ok = true;
 end:
     return ok;
@@ -102,24 +134,36 @@ end:
 
 bool nxvm_init(size_t backing_bytes) {
     mutexLock(&lock);
-    bool ok = initialize_locked(backing_bytes);
+    bool ok = initialize_locked(backing_bytes, false);
+    mutexUnlock(&lock); return ok;
+}
+
+bool nxvm_init_protected(size_t backing_bytes) {
+    mutexLock(&lock);
+    bool ok = initialize_locked(backing_bytes, true);
     mutexUnlock(&lock); return ok;
 }
 
 bool nxvm_ensure_initialized(size_t backing_bytes) {
     mutexLock(&lock);
-    bool ok = pool ? !stats.poisoned : initialize_locked(backing_bytes);
+    bool ok = pool ? !stats.poisoned : initialize_locked(backing_bytes, false);
     mutexUnlock(&lock); return ok;
 }
 
 bool nxvm_destroy(void) {
     mutexLock(&lock);
     bool ok = pool && !regions && !used_pages && !stats.poisoned;
+    if (ok && protected_data) {
+        Result rc = svcUnmapProcessCodeMemory(process_handle, (uintptr_t)arena,
+                                              (uintptr_t)pool, stats.capacity);
+        if (R_FAILED(rc)) { stats.last_svc_error = rc; stats.poisoned = true; ok = false; }
+    }
     if (ok) {
         virtmemLock(); virtmemRemoveReservation(arena_reservation); virtmemUnlock();
         arena_reservation = NULL; arena = NULL; arena_bytes = 0;
         free(pool); free(used); pool = used = NULL; pool_pages = 0;
         stats = (NxvmStats){0};
+        protected_data = false; process_handle = INVALID_HANDLE;
     }
     mutexUnlock(&lock); return ok;
 }
@@ -179,15 +223,20 @@ bool nxvm_commit(void *address, size_t bytes) {
     if (needed > pool_pages - used_pages) goto end;
     for (size_t i = first, cursor = 0; i < end_page;) {
         if (r->backing[i]) { i++; continue; }
-        while (cursor < pool_pages && used[cursor]) cursor++;
+        if (protected_data) cursor = (r->address - arena) / PAGE + i;
+        else while (cursor < pool_pages && used[cursor]) cursor++;
         size_t n = 0;
         while (i + n < end_page && !r->backing[i + n] &&
                cursor + n < pool_pages && !used[cursor + n]) n++;
         if (!n) goto rollback;
-        // These pages are exclusively owned and currently unmapped at source.
-        memset(pool + cursor * PAGE, 0, n * PAGE);
-        Result rc = svcMapMemory(r->address + i * PAGE, pool + cursor * PAGE, n * PAGE);
+        // The data alias keeps its source locked for the entire pool lifetime.
+        // Stack aliases instead acquire source pages for each commit operation.
+        if (!protected_data) memset(pool + cursor * PAGE, 0, n * PAGE);
+        Result rc = protected_data ?
+            svcSetMemoryPermission(r->address + i * PAGE, n * PAGE, Perm_Rw) :
+            svcMapMemory(r->address + i * PAGE, pool + cursor * PAGE, n * PAGE);
         if (R_FAILED(rc)) { stats.last_svc_error = rc; goto rollback; }
+        if (protected_data) memset(r->address + i * PAGE, 0, n * PAGE);
         for (size_t j = 0; j < n; j++)
             r->backing[i + j] = NEW_PAGE | (uint32_t)(cursor + j + 1);
         memset(used + cursor, 1, n);

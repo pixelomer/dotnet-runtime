@@ -14,6 +14,9 @@ extern "C" {
 extern "C" { unsigned __nx_applet_exit_mode = 1; }
 static FILE* output;
 static std::atomic<unsigned> checks{0};
+#ifndef TEST_PROTECTED_POOL
+#define TEST_PROTECTED_POOL 0
+#endif
 static void check(bool value, const char* name)
 {
     unsigned count = ++checks;
@@ -38,6 +41,8 @@ static void* worker(void*)
         check(p != nullptr, "reserve without proportional backing");
         auto info = query(p);
         check(info.State == MEM_RESERVE && info.RegionSize == 2 * 1024 * 1024, "reserved range");
+        DWORD reservedOld = 0;
+        check(!VirtualProtect(p, 4096, PAGE_NOACCESS, &reservedOld), "reserved pages cannot be protected");
         check(VirtualAlloc(p + 1, 4096, MEM_COMMIT, PAGE_READWRITE) == p, "unaligned two-page commit");
         check(query(p).State == MEM_COMMIT && query(p).Protect == PAGE_READWRITE, "committed query");
         check(allZero(p, 8192), "fresh committed pages zero");
@@ -62,9 +67,10 @@ int main()
     if (!output) return 1;
     setvbuf(output, nullptr, _IONBF, 0);
     fprintf(output, "BEGIN CoreCLR PAL virtual memory; no managed runtime\n");
-    check(nxvm_init(8 * 1024 * 1024), "initialize bounded host pool");
+    const size_t poolBytes = (TEST_PROTECTED_POOL ? 32 : 8) * 1024 * 1024;
+    check(TEST_PROTECTED_POOL ? nxvm_init_protected(poolBytes) : nxvm_init(poolBytes), "initialize bounded host pool");
     check(VIRTUALInitialize(true), "PAL shares existing pool");
-    check(nxvm_stats().capacity == 8 * 1024 * 1024, "PAL does not replace shared pool");
+    check(nxvm_stats().capacity == poolBytes, "PAL does not replace shared pool");
     SYSTEM_INFO system{}; GetSystemInfo(&system);
     u64 mask, base, length;
     check(R_SUCCEEDED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)), "kernel core mask");
@@ -79,16 +85,16 @@ int main()
     fprintf(output, "SYSTEM cpus=%u index_bound=%u max_address=%p page=%u\n", count, maximum,
         system.lpMaximumApplicationAddress, system.dwPageSize);
     auto p = static_cast<unsigned char*>(VirtualAlloc(nullptr, 16 * 1024 * 1024, MEM_RESERVE, PAGE_NOACCESS));
-    check(p != nullptr, "reservation exceeds physical pool");
+    check(p != nullptr, "large reservation (exceeds backing on default backend)");
     check(VirtualAlloc(p, 4096, MEM_COMMIT, PAGE_READWRITE) == p, "initial commit"); p[0] = 42;
-    check(!VirtualAlloc(p, 12 * 1024 * 1024, MEM_COMMIT, PAGE_READWRITE), "quota failure");
+    check(!VirtualAlloc(p, (TEST_PROTECTED_POOL ? 20 : 12) * 1024 * 1024, MEM_COMMIT, PAGE_READWRITE), "range or quota failure");
     check(p[0] == 42 && nxvm_stats().committed == 4096, "quota failure preserves earlier pages");
     check(!VirtualAlloc(p + 16 * 1024 * 1024 - 4096, 8192, MEM_COMMIT, PAGE_READWRITE), "cross-reservation commit rejected");
     check(!VirtualAlloc(p, 4096, MEM_RESERVE, PAGE_READWRITE), "fixed reservation rejected");
     check(!VirtualAlloc(nullptr, SIZE_MAX, MEM_RESERVE, PAGE_NOACCESS), "overflow rejected");
     check(!VirtualAlloc(nullptr, 4096, MEM_COMMIT, PAGE_EXECUTE_READWRITE), "data pool rejects executable mapping");
     check(VirtualFree(p, 0, MEM_RELEASE), "cleanup quota case");
-    check(query(p).State == MEM_FREE, "released range no longer reserved");
+    check(query(p).State == (TEST_PROTECTED_POOL ? MEM_COMMIT : MEM_FREE), "released range: pool-owned alias or free kernel span");
     for (unsigned round = 0; round < 16; ++round)
     {
         pthread_t threads[4];

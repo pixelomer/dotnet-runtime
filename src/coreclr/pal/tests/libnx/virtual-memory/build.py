@@ -14,6 +14,7 @@ source = Path(__file__).resolve().parent
 repo = source.parents[5]
 parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
+parser.add_argument('--protected-pool', action='store_true')
 args = parser.parse_args()
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
@@ -30,9 +31,10 @@ libnx_root = devkitpro / 'libnx'
 for line in (build / 'CMakeCache.txt').read_text().splitlines():
     if line.startswith('LIBNX_ROOT:PATH='):
         libnx_root = Path(line.split('=', 1)[1])
-output = repo / 'artifacts/libnx-coreclr-vm'
+output = repo / ('artifacts/libnx-coreclr-vm-protected' if args.protected_pool else 'artifacts/libnx-coreclr-vm')
 output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS']
+if args.protected_pool: compile_flags.append('-DTEST_PROTECTED_POOL=1')
 objects = []
 for unit in [source / 'main.cpp', repo / 'src/coreclr/pal/src/map/libnx/virtual.cpp',
              repo / 'src/coreclr/pal/src/loader/libnx/module.cpp',

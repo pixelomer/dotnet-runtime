@@ -35,3 +35,26 @@ executable mapping and full CoreCLR startup remain separate work.
 Original adapter/test code uses official .NET PAL and public libnx APIs.
 No Nintendo
 SDK material or third-party commercial runtime is used.
+
+## Optional protected pool control
+
+After the same source SDK staging and PAL cross-configuration, run:
+
+```sh
+python3 src/coreclr/pal/tests/libnx/virtual-memory/build.py --protected-pool
+```
+
+This selects a 32 MiB protected data pool and writes generated files under
+artifacts/libnx-coreclr-vm-protected. The default variant retains its 8 MiB
+backing pool and larger sparse reservations. Rebuilding replaces generated
+files in the corresponding directory. Both variants overwrite the same
+SD log; preserve it between runs.
+
+Queries distinguish logical reservations from kernel aliases, and protecting
+uncommitted owned pages must fail. After PAL reservation release, the protected
+pool still owns its no-access kernel alias until pool destruction; the default
+backend returns an unmapped span. The variant does not broaden supported
+protection operations for PAL-owned data.
+
+The [allocator probe](../protected-pool/README.md) separately covers the shared
+pool's initialization, rollback and fail-closed ownership contract.

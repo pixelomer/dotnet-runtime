@@ -204,6 +204,11 @@ BOOL PALAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD protect, PDWORD ol
     {
         SetLastError(ERROR_INVALID_ADDRESS); return FALSE;
     }
+    if (region != nullptr && !nxvm_is_committed(reinterpret_cast<void*>(start), bytes))
+    {
+        // A protected pool has a kernel alias even for logically reserved pages.
+        SetLastError(ERROR_INVALID_ADDRESS); return FALSE;
+    }
     DWORD old = 0;
     bool same = true;
     uintptr_t end = start + bytes;
@@ -303,7 +308,7 @@ SIZE_T PALAPI VirtualQuery(LPCVOID address, PMEMORY_BASIC_INFORMATION output, SI
         value.AllocationProtect = region->allocationProtect;
         size_t remaining = region->size - (start - region->base);
         if (value.RegionSize > remaining) value.RegionSize = remaining;
-        value.State = info.type == MemType_Unmapped ? MEM_RESERVE : MEM_COMMIT;
+        value.State = nxvm_is_committed(reinterpret_cast<void*>(start), Page) ? MEM_COMMIT : MEM_RESERVE;
         value.Type = MEM_PRIVATE;
     }
     else
