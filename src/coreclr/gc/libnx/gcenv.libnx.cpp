@@ -34,7 +34,7 @@ extern "C" void LibnxGCOutOfMemoryDiagnostic(int reason, size_t allocation,
     auto stats = nxvm_stats();
     char message[480];
     snprintf(message, sizeof(message),
-        "GC_OOM reason=%d allocation=%zu gc=%zu failure=%d failure_size=%zu hard_limit=%zu gc_committed=%zu region_range=%zu pool=%zu pool_committed=%zu pool_reserved=%zu reservations=%zu svc=%x poisoned=%d",
+        "GC_OOM reason=%d history_size=%zu gc=%zu failure=%d failure_size=%zu hard_limit=%zu gc_committed=%zu region_range=%zu pool=%zu pool_committed=%zu pool_reserved=%zu reservations=%zu svc=%x poisoned=%d",
         reason, allocation, gcIndex, failure, failureSize, hardLimit, committed,
         regionRange, stats.capacity, stats.committed, stats.reserved,
         stats.reservations, stats.last_svc_error, stats.poisoned);

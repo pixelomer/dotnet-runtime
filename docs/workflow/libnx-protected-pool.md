@@ -62,3 +62,11 @@ failed-get-memory values use
 The sink must remain native-only. This reporting does not alter collection,
 retry or budget policy, and the counters alone do not identify a retained
 object graph or a fragmentation pattern.
+
+## OOM history-size field
+
+The diagnostic labels the size supplied by handle_oom as history_size.
+For oom_budget, handle_oom replaces the original allocation size with half
+the generation-zero minimum before recording and reporting it. That value
+is not necessarily the application's requested allocation size.
+The label change does not modify collector behavior or configured budgets.
