@@ -24,7 +24,7 @@ struct Chunk {
     size_t size, references;
     void* backing;
     Handle handle;
-    bool executable, primaryMapped;
+    bool executable;
 };
 struct View { View* next; uintptr_t address, primary; size_t size; };
 struct Region {
@@ -72,27 +72,26 @@ void Require(Result rc) {
     // or mapped. Terminate rather than publish corrupted allocator ownership.
     if (R_FAILED(rc)) abort();
 }
-void DestroyChunk(Chunk* c) {
+void RollbackChunk(Chunk* c) {
     if (c->references) abort();
-    if (c->primaryMapped)
-        Require(svcUnmapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
-    // The process handle is borrowed from libnx's environment, not ours to close.
+    // A successful RW protection changes AliasCode to AliasCodeData, which
+    // cannot regain executable capability. Restore a fresh inaccessible alias
+    // on transaction rollback, not merely its permissions.
+    Require(svcUnmapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
+    memset(c->backing, 0, c->size);
+    armDCacheFlush(c->backing, c->size);
+    Require(svcMapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
     free(c);
 }
 Chunk* CreateChunk(Region* r, uintptr_t primary, size_t size, bool executable) {
     Chunk* c = static_cast<Chunk*>(calloc(1, sizeof(Chunk)));
     if (!c) return nullptr;
     c->primary = primary;
-    c->size = size; c->executable = executable; c->handle = INVALID_HANDLE;
+    c->size = size; c->executable = executable;
     c->backing = static_cast<unsigned char*>(r->backing) + (primary - r->base);
     c->handle = envGetOwnProcessHandle();
-    memset(c->backing, 0, size);
-    armDCacheFlush(c->backing, size);
-    Result rc = svcMapProcessCodeMemory(c->handle, primary, reinterpret_cast<uintptr_t>(c->backing), size);
+    Result rc = svcSetProcessMemoryPermission(c->handle, primary, size, executable ? Perm_Rx : Perm_Rw);
     if (R_FAILED(rc)) { free(c); return nullptr; }
-    c->primaryMapped = true;
-    rc = svcSetProcessMemoryPermission(c->handle, primary, size, executable ? Perm_Rx : Perm_Rw);
-    if (R_FAILED(rc)) { DestroyChunk(c); return nullptr; }
     if (executable) armICacheInvalidate(reinterpret_cast<void*>(primary), size);
     return c;
 }
@@ -182,15 +181,19 @@ void* VMToOSInterface::CommitDoubleMappedMemory(void* address, size_t size, bool
     if (!r) return nullptr;
     for (Chunk* c = r->chunks; c; c = c->next)
         if (Overlaps(start, size, c->primary, c->size) && c->executable != executable) return nullptr;
-    // Independent page-sized malloc allocations interleave allocator headers
-    // and metadata with mapped-away source pages. Thousands of JIT commits can
-    // exhaust Horizon's shared memory-block descriptors even with ample heap.
-    // A reservation owns contiguous native backing, allocated on first commit;
-    // only requested chunks become mapped/accessible in the primary arena.
-    // Adjacent source and destination permissions can then coalesce in Horizon.
+    // Map one initially inaccessible alias per reservation. Horizon disables
+    // merging at every MapProcessCodeMemory boundary: mapping each tiny JIT
+    // commit separately exhausts shared kernel descriptors even with contiguous
+    // native backing. Protection changes can merge adjacent committed pages.
     if (!r->backing) {
-        r->backing = aligned_alloc(Page, r->size);
-        if (!r->backing) return nullptr;
+        void* backing = aligned_alloc(Page, r->size);
+        if (!backing) return nullptr;
+        memset(backing, 0, r->size);
+        armDCacheFlush(backing, r->size);
+        Result rc = svcMapProcessCodeMemory(envGetOwnProcessHandle(), r->base,
+            reinterpret_cast<uintptr_t>(backing), r->size);
+        if (R_FAILED(rc)) { free(backing); return nullptr; }
+        r->backing = backing;
     }
     Chunk* pending = nullptr;
     uintptr_t end = start + size;
@@ -202,7 +205,7 @@ void* VMToOSInterface::CommitDoubleMappedMemory(void* address, size_t size, bool
             if (existing->primary > current && existing->primary < next) next = existing->primary;
         c = CreateChunk(r, current, next - current, executable);
         if (!c) {
-            while (pending) { Chunk* old = pending; pending = pending->next; DestroyChunk(old); }
+            while (pending) { Chunk* old = pending; pending = pending->next; RollbackChunk(old); }
             return nullptr;
         }
         c->next = pending; pending = c; current = next;
@@ -326,7 +329,10 @@ bool VMToOSInterface::ReleaseDoubleMappedMemory(void* handle, void* address, siz
     while (*link && (*link)->base != reinterpret_cast<uintptr_t>(address)) link = &(*link)->next;
     Region* r = *link;
     if (!r || r->size != size || r->offset != offset || r->views) return false;
-    while (r->chunks) { Chunk* c = r->chunks; r->chunks = c->next; DestroyChunk(c); }
+    if (r->backing)
+        Require(svcUnmapProcessCodeMemory(envGetOwnProcessHandle(), r->base,
+            reinterpret_cast<uintptr_t>(r->backing), r->size));
+    while (r->chunks) { Chunk* c = r->chunks; r->chunks = c->next; if (c->references) abort(); free(c); }
     *link = r->next; free(r->backing); free(r);
     MaybeDestroyMapper(m);
     return true;

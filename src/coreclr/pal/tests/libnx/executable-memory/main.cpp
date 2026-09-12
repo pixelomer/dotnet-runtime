@@ -138,6 +138,13 @@ int main() {
         check(!VM::ReleaseDoubleMappedMemory(mapper, fixed, 0, 4096), "wrong release offset rejected");
         check(VM::ReleaseDoubleMappedMemory(mapper, fixed, 4096, 4096), "release fixed allocation");
         check(VM::ReleaseDoubleMappedMemory(mapper, bounded, 8192, 4096), "release bounded allocation");
+        auto failedReservation = VM::ReserveDoubleMappedMemory(mapper, 0, 16384, nullptr, nullptr);
+        check(failedReservation != nullptr, "reserve initial-map failure test");
+        failCodeMap = 1;
+        check(!VM::CommitDoubleMappedMemory(failedReservation, 4096, true), "initial region map failure");
+        check(permission(failedReservation) == Perm_None, "failed region map inaccessible");
+        check(VM::CommitDoubleMappedMemory(failedReservation, 4096, true) == failedReservation, "retry initial region map");
+        check(VM::ReleaseDoubleMappedMemory(mapper, failedReservation, 0, 16384), "release retried region map");
         // Preexisting middle chunk divides the transaction into two fresh runs.
         p = static_cast<unsigned char*>(VM::ReserveDoubleMappedMemory(mapper, 0, 16384, nullptr, nullptr));
         check(p && VM::CommitDoubleMappedMemory(p + 4096, 4096, true) == p + 4096, "failure-test middle chunk");
@@ -146,8 +153,8 @@ int main() {
         check(VM::ReleaseRWMapping(writer, 4096), "publish preexisting function");
         check(permission(writer) == Perm_None, "single-thread retired view really unmapped");
         check(!VM::ReleaseRWMapping(writer, 4096), "single-thread stale view rejected before reuse");
-        for (auto* fault : {&failCodeMap, &failPermission}) {
-            *fault = 2;
+        {
+            failPermission = 2;
             check(!VM::CommitDoubleMappedMemory(p, 12288, true), "second fresh-run failure");
             check(permission(p) == Perm_None && permission(p + 8192) == Perm_None, "fresh runs rolled back");
             check(reinterpret_cast<Function>(p + 4096)() == 321, "commit rollback retains old function");
@@ -160,6 +167,15 @@ int main() {
         check(writer != nullptr, "retry view after rollback");
         check(VM::ReleaseRWMapping(writer, 12288), "release recovered view");
         check(VM::ReleaseDoubleMappedMemory(mapper, p, 0, 16384), "retire all failure-test ownership");
+        auto dataRollback = static_cast<unsigned char*>(VM::ReserveDoubleMappedMemory(mapper, 0, 16384, nullptr, nullptr));
+        check(dataRollback && VM::CommitDoubleMappedMemory(dataRollback + 4096, 4096, false), "rollback data middle");
+        dataRollback[4096] = 73;
+        failPermission = 2;
+        check(!VM::CommitDoubleMappedMemory(dataRollback, 12288, false), "rollback partial RW transaction");
+        check(permission(dataRollback) == Perm_None && permission(dataRollback + 8192) == Perm_None, "RW rollback inaccessible");
+        check(dataRollback[4096] == 73, "RW rollback preserves existing data");
+        check(VM::CommitDoubleMappedMemory(dataRollback, 4096, true), "rolled back RW page can become RX");
+        check(VM::ReleaseDoubleMappedMemory(mapper, dataRollback, 0, 16384), "release mixed rollback region");
         auto shared = static_cast<unsigned char*>(VM::ReserveDoubleMappedMemory(mapper, 262144, 4096, nullptr, nullptr));
         check(shared && VM::CommitDoubleMappedMemory(shared, 4096, true) == shared, "shared function commitment");
         writer = VM::GetRWMapping(mapper, shared, 262144, 4096);
@@ -187,11 +203,15 @@ int main() {
     // one reservation, with writable aliases crossing their boundaries.
     void* denseMapper=nullptr; size_t denseCapacity=0;
     check(VM::CreateDoubleMemoryMapper(&denseMapper,&denseCapacity), "dense mapper");
-    constexpr size_t DensePages=2048, DenseBytes=DensePages*4096;
+    constexpr size_t DensePages=16384, DenseBytes=DensePages*4096;
     auto dense=static_cast<unsigned char*>(VM::ReserveDoubleMappedMemory(denseMapper,0,DenseBytes,nullptr,nullptr));
     check(dense!=nullptr,"dense reservation");
     for (size_t i=0;i<DensePages;++i)
         check(VM::CommitDoubleMappedMemory(dense+i*4096,4096,true)==dense+i*4096,"dense page commitment");
+    MemoryInfo denseInfo{}; u32 densePageInfo;
+    check(R_SUCCEEDED(svcQueryMemory(&denseInfo,&densePageInfo,reinterpret_cast<u64>(dense))), "query dense mapping span");
+    check(denseInfo.addr==reinterpret_cast<u64>(dense) && denseInfo.size==DenseBytes && denseInfo.perm==Perm_Rx, "dense commits coalesce into one kernel block");
+    fprintf(output,"DENSE kernel_span=%llu pages=%zu\n",(unsigned long long)denseInfo.size,DensePages);
     for (size_t i=0;i<DensePages;i+=2) {
         void* writer=VM::GetRWMapping(denseMapper,dense+i*4096,i*4096,8192);
         check(writer!=nullptr,"dense crossing writer");

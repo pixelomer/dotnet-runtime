@@ -33,15 +33,15 @@ A mapper closed with live allocations is retired after their final release.
 The existing CoreCLR allocator, loader heaps and JIT remain unchanged. The new
 VMToOSInterface implementation uses public libnx process-memory SVCs with the
 actual own-process handle supplied by the loader. Each mapper owns two 512 MiB
-virtual arenas; native backing is allocated per reservation on its first commitment. Only
-requested pages are mapped in the primary arena. Logical offsets
+virtual arenas; native backing is allocated per reservation on its first commitment. The full primary reservation is initially mapped inaccessible; only
+requested pages become accessible. Logical offsets
 cannot overlap live allocations. Mandatory ranges and exact placement are
 honored **within the owned primary arena**; other addresses fail. This is a
 bounded allocator, not general fixed mmap support.
 
-Each reservation owns contiguous aligned backing; fresh commit runs map their
-corresponding slices through MapProcessCodeMemory
-and protected RX or RW through SetProcessMemoryPermission. Writable subviews
+Each reservation owns contiguous aligned backing and one initial
+MapProcessCodeMemory call. Fresh commit runs receive RX or RW permissions
+through SetProcessMemoryPermission. Writable subviews
 use MapProcessMemory against the actual RX mapping. Each request owns a
 disjoint writer address range and retains its source chunks, including requests
 for overlapping RX bytes. Releasing one view flushes its aliases and unmaps
@@ -75,10 +75,10 @@ including bytes not yet committed in the primary arena. Budget native memory
 for the reservation size, not only the accessible chunks. Each mapper's
 reservation offsets remain bounded by its 512 MiB capacity.
 
-The dense workload commits 2,048 independent 4 KiB pages in one reservation,
-writes emitted functions through views crossing chunk boundaries, executes
-them after writer retirement and checks inaccessible addresses after release.
-These are workload dimensions, not captured performance results.
+The dense workload commits independent pages in one reservation, writes emitted
+functions through views crossing chunk boundaries, executes them after writer
+retirement and checks inaccessible addresses after release. Workload dimensions
+are specified below; they are not captured performance results.
 
 An optional LibnxRuntimeDiagnostic callback receives RW-map failures with
 region/chunk/view counts and native process/resource counters. Those counters
@@ -90,3 +90,27 @@ its objects and NRO/ELF/map/NACP files. The helper takes LIBNX_ROOT from the
 selected CMake cache for both compile configuration and link inputs.
 Follow the [thread guide](../threads/README.md) to stage the pinned SDK and
 configure coreclr-probe consistently.
+
+## Reservation-wide primary mapping
+
+On first commitment, the allocator maps the whole reservation as an inaccessible
+primary alias of its contiguous backing. Fresh commits set RX or RW permissions
+on the requested runs. This avoids a separate MapProcessCodeMemory boundary for
+each small JIT commitment. Uncommitted primary pages remain inaccessible,
+although the reservation's native backing is allocated.
+
+Whole-region teardown unmaps the primary alias before freeing backing.
+Rollback of fresh commit runs unmaps and recreates inaccessible aliases rather
+than only changing permissions: a code alias converted to RW data cannot
+regain executable capability by a permission change alone. Existing committed
+chunks remain intact. Failed cleanup terminates instead of freeing locked
+backing.
+
+The dense workload uses 16,384 independent 4 KiB commitments and queries
+whether their RX range coalesces into a single kernel memory block. It also
+covers initial mapping failure/retry, partial RW rollback, preserved old data
+and a later RX commitment to a rolled-back page.
+GC commit failures report shared-pool capacity, committed/reserved bytes,
+reservation count, the last SVC error and the poisoned flag through the
+optional diagnostic callback. These probes and diagnostics are not managed
+application compatibility guarantees.

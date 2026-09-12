@@ -70,7 +70,17 @@ void* GCToOSInterface::VirtualReserve(size_t size, size_t alignment, uint32_t fl
 bool GCToOSInterface::VirtualRelease(void* address, size_t size) { return nxvm_release(address, PageSize(size)); }
 bool GCToOSInterface::VirtualCommit(void* address, size_t size, uint16_t node)
 {
-    return node == NUMA_NODE_UNDEFINED && nxvm_commit(address, PageSize(size));
+    if (node != NUMA_NODE_UNDEFINED) return false;
+    if (nxvm_commit(address, PageSize(size))) return true;
+    if (LibnxRuntimeDiagnostic) {
+        auto stats = nxvm_stats();
+        char message[240];
+        snprintf(message, sizeof(message), "GCCommit failed address=%p bytes=%zu pool=%zu committed=%zu reserved=%zu reservations=%zu svc=%x poisoned=%d",
+            address, size, stats.capacity, stats.committed, stats.reserved,
+            stats.reservations, stats.last_svc_error, stats.poisoned);
+        LibnxRuntimeDiagnostic(message);
+    }
+    return false;
 }
 bool GCToOSInterface::VirtualDecommit(void* address, size_t size) { return nxvm_decommit(address, PageSize(size)); }
 void* GCToOSInterface::VirtualReserveAndCommitLargePages(size_t, uint16_t) { return nullptr; }
