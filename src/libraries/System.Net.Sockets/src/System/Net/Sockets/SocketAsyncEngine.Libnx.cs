@@ -19,11 +19,13 @@ namespace System.Net.Sockets
             1024;
 #endif
 
-        private static bool Logging;
+        // Use the socket library's existing diagnostics dependency. System.Console
+        // is not a reference of this low-level BCL assembly.
+        [Conditional("DEBUG")]
         private static void Log(string str)
         {
-            if (Logging)
-                Console.WriteLine(str);
+            if (NetEventSource.Log.IsEnabled())
+                NetEventSource.Info(null, str);
         }
 
         // Socket continuations are dispatched to the ThreadPool from the event thread.
