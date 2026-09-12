@@ -1,3 +1,5 @@
+> Nintendo Switch homebrew: see the [Horizon runtime build guide](eng/libnx/README.md) for source builds and related integration repositories.
+
 # .NET Runtime
 
 [![Build Status](https://dev.azure.com/dnceng-public/public/_apis/build/status/dotnet/runtime/runtime?branchName=main)](https://dev.azure.com/dnceng-public/public/_build/latest?definitionId=129&branchName=main)
