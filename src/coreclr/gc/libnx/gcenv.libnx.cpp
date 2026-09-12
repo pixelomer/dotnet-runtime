@@ -22,6 +22,25 @@ static AffinitySet s_affinity;
 static uint32_t s_cpuCount;
 static uint32_t s_maxCpuCount;
 static uint64_t s_allowedCoreMask;
+
+extern "C" void LibnxGCOutOfMemoryDiagnostic(int reason, size_t allocation,
+    size_t gcIndex, int failure, size_t failureSize, size_t hardLimit,
+    size_t committed, size_t regionRange)
+{
+    if (!LibnxRuntimeDiagnostic) return;
+    // Cascading failures in an application's error handler must not flood logs.
+    static unsigned logged;
+    if (__atomic_fetch_add(&logged, 1, __ATOMIC_RELAXED) >= 16) return;
+    auto stats = nxvm_stats();
+    char message[480];
+    snprintf(message, sizeof(message),
+        "GC_OOM reason=%d allocation=%zu gc=%zu failure=%d failure_size=%zu hard_limit=%zu gc_committed=%zu region_range=%zu pool=%zu pool_committed=%zu pool_reserved=%zu reservations=%zu svc=%x poisoned=%d",
+        reason, allocation, gcIndex, failure, failureSize, hardLimit, committed,
+        regionRange, stats.capacity, stats.committed, stats.reserved,
+        stats.reservations, stats.last_svc_error, stats.poisoned);
+    LibnxRuntimeDiagnostic(message);
+    fprintf(stderr, "%s\n", message);
+}
 // Kernel-backed rendezvous of registered runtime threads, including GC workers.
 // See src/coreclr/nativeaot/Runtime/libnx/THREAD_ORDERING.md for this protocol.
 extern "C" void LibnxFlushProcessWriteBuffers();

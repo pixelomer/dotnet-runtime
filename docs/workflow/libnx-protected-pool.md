@@ -47,3 +47,18 @@ the native heap reservation and are not a count of live malloc allocations.
 Both data and executable mappings can contribute to resource pressure.
 Probe coverage does not establish an adequate heap budget for every application
 or identify the cause of an unrelated native allocation failure.
+
+## Collector OOM diagnostics
+
+The collector forwards its existing handle_oom record to the optional native
+LibnxRuntimeDiagnostic sink. It reports reason, history allocation size,
+GC index, failed-get-memory reason/size, hard limit, current committed total,
+region range and nxvm pool capacity/commit/reservation/status.
+
+The helper emits up to 16 records per process, only when the sink exists,
+and also writes each emitted record to stderr. Numeric reason and
+failed-get-memory values use
+[gcinterface.dac.h](../../src/coreclr/gc/gcinterface.dac.h).
+The sink must remain native-only. This reporting does not alter collection,
+retry or budget policy, and the counters alone do not identify a retained
+object graph or a fragmentation pattern.

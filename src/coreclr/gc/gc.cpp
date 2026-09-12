@@ -28,6 +28,12 @@
 #include "gcenv.inl"
 #include "gceventstatus.h"
 
+#ifdef TARGET_LIBNX
+extern "C" void LibnxGCOutOfMemoryDiagnostic(int reason, size_t allocation,
+    size_t gcIndex, int failure, size_t failureSize, size_t hardLimit,
+    size_t committed, size_t regionRange);
+#endif
+
 #ifdef __INTELLISENSE__
 #if defined(FEATURE_SVR_GC)
 
@@ -17391,6 +17397,20 @@ void gc_heap::handle_oom (oom_reason reason, size_t alloc_size,
     oom_info.size = fgm_result.size;
     oom_info.available_pagefile_mb = fgm_result.available_pagefile_mb;
     oom_info.loh_p = fgm_result.loh_p;
+
+#ifdef TARGET_LIBNX
+    // Observe the collector's existing OOM decision without changing recovery,
+    // collection policy or budgets. The optional host sink is native-only.
+    LibnxGCOutOfMemoryDiagnostic(static_cast<int>(reason), alloc_size,
+        settings.gc_index, static_cast<int>(fgm_result.fgm), fgm_result.size,
+        heap_hard_limit, current_total_committed,
+#ifdef USE_REGIONS
+        regions_range
+#else
+        0
+#endif
+    );
+#endif
 
     add_to_oom_history_per_heap();
     fgm_result.fgm = fgm_no_failure;
