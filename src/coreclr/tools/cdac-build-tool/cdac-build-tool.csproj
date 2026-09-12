@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublicSign">
 
   <PropertyGroup>
     <AssemblyName>cdac-build-tool</AssemblyName>
@@ -11,6 +11,9 @@
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
     <IsPackable>false</IsPackable>
+    <!-- This unsigned host tool has no key; the Horizon build public-signs
+         its signed runtime libraries without imposing signing on this tool. -->
+    <PublicSign>false</PublicSign>
     <IsShipping>false</IsShipping> <!-- This tool is an implementation detail of the build process, it does not ship -->
     <Description>.NET runtime data contract build tool</Description>
     <RootNamespace>Microsoft.DotNet.Diagnostics.DataContract</RootNamespace>

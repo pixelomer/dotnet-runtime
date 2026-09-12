@@ -68,6 +68,9 @@ endif()
 # Keep generated event headers and the explicitly disabled interface on Horizon.
 # Do not build Linux diagnostic sockets or claim eventpipe-enabled support.
 if(CLR_CMAKE_TARGET_LIBNX)
+  set(EP_GENERATED_HEADER_PATH "${GENERATED_INCLUDE_DIR}")
+  include(${CLR_SRC_NATIVE_DIR}/eventpipe/configure.cmake)
+  include_directories(${EP_GENERATED_HEADER_PATH})
   add_library(eventpipe-disabled STATIC
     ${RUNTIME_DIR}/DisabledEventPipeInterface.cpp
     ${RUNTIME_DIR}/disabledeventpipeinternal.cpp

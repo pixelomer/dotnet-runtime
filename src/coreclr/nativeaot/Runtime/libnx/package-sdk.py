@@ -23,11 +23,13 @@ sdk = Path('artifacts/bin/coreclr/libnx.arm64.Release/aotsdk')
 native = Path(f'artifacts/bin/native/net{major}.0-libnx-Release-arm64')
 platform = Path('src/coreclr/nativeaot/Runtime/libnx')
 files = [Path('LICENSE.TXT'), Path('THIRD-PARTY-NOTICES.TXT')]
-files += [sdk/name for name in (
-    'System.Private.CoreLib.dll', 'System.Private.DisabledReflection.dll',
-    'System.Private.Reflection.Execution.dll', 'System.Private.StackTraceMetadata.dll',
-    'System.Private.TypeLoader.dll', 'libRuntime.WorkstationGC.a',
-    'libbootstrapperdll.o', 'libeventpipe-disabled.a', 'libstandalonegc-disabled.a')]
+managed_names = ['System.Private.CoreLib.dll', 'System.Private.Reflection.Execution.dll',
+                 'System.Private.StackTraceMetadata.dll', 'System.Private.TypeLoader.dll']
+if major == 9:
+    managed_names.insert(1, 'System.Private.DisabledReflection.dll')
+files += [sdk/name for name in managed_names]
+files += [sdk/name for name in ('libRuntime.WorkstationGC.a', 'libbootstrapperdll.o',
+                               'libeventpipe-disabled.a', 'libstandalonegc-disabled.a')]
 files += [native/name for name in ('libSystem.Native.a', 'libSystem.Globalization.Native.a',
                                   'libSystem.IO.Compression.Native.a')]
 files += [platform/name for name in ('create-linker-script.py', 'validate-sdk.py')]
