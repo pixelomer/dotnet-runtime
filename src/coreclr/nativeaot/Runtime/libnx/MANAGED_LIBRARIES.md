@@ -1,3 +1,8 @@
+> Build this branch's .NET 10 SDK with `python3 eng/libnx/build.py --flavor nativeaot`
+> from the repository root, then source `eng/libnx/env.sh`. Follow the
+> [source-build prerequisites](../../../../../eng/libnx/README.md).
+> Keep its .NET 10.0.12 runtime, SDK assemblies and ILC together.
+
 # Building the Horizon managed NativeAOT libraries
 
 This branch uses .NET 10.0.12, public baseline

@@ -111,6 +111,9 @@ def build(a, out, env):
     major = int(version.split('.')[0])
     common = ['-c', 'Release', '--cross', '-a', 'arm64', '--os', 'libnx', '/p:PublicSign=true']
     cmake = '-DFEATURE_EVENT_TRACE=OFF -DFEATURE_PERFTRACING=OFF -DLIBNX_ROOT=' + env['DEVKITPRO'] + '/libnx'
+    # Upstream build.sh forwards $@ without quotes: give each CMake setting
+    # its own switch so no multi-word argument is split before eng/build.sh.
+    cmake_args = [value for flag in cmake.split() for value in ('-cmakeargs', flag)]
     if a.flavor == 'coreclr':
         if major < 10: raise RuntimeError('CoreCLR requires the Horizon .NET10 branch')
         run(['bash', ROOT / 'src/coreclr/build-runtime.sh', 'arm64', 'release', 'cross', '-os', 'libnx',
@@ -120,7 +123,7 @@ def build(a, out, env):
         run([ROOT / 'build.sh', '-s', 'clr.corelib+libs.sfx', *common, '/p:RuntimeFlavor=CoreCLR'], cwd=ROOT, env=env)
     elif a.flavor == 'nativeaot':
         run([ROOT / 'build.sh', '-s', 'clr.nativeaotruntime+libs.native', *common,
-             '/p:NativeAotSupported=true', '/p:EnableTrimAnalyzer=false', '-cmakeargs', cmake], cwd=ROOT, env=env)
+             '/p:NativeAotSupported=true', '/p:EnableTrimAnalyzer=false', *cmake_args], cwd=ROOT, env=env)
         run([ROOT / 'build.sh', '-s', 'clr.nativeaotlibs', *common,
              '/p:NativeAotSupported=true', '/p:EnableTrimAnalyzer=false'], cwd=ROOT, env=env)
         if major == 9:

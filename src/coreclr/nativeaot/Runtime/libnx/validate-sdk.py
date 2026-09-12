@@ -25,7 +25,8 @@ if not isinstance(files, dict) or not files:
 sdk = 'artifacts/bin/coreclr/libnx.arm64.Release/aotsdk/'
 major = data['runtime_version'].split('.')[0]
 required = [sdk + 'System.Private.' + n + '.dll' for n in
-            ('CoreLib', 'DisabledReflection', 'Reflection.Execution', 'StackTraceMetadata', 'TypeLoader')]
+            ('CoreLib', 'Reflection.Execution', 'StackTraceMetadata', 'TypeLoader')]
+if major == '9': required.append(sdk + 'System.Private.DisabledReflection.dll')
 required += [sdk + n for n in ('libRuntime.WorkstationGC.a', 'libbootstrapperdll.o', 'libeventpipe-disabled.a', 'libstandalonegc-disabled.a')]
 required += [f'artifacts/bin/native/net{major}.0-libnx-Release-arm64/' + n for n in
              ('libSystem.Native.a', 'libSystem.Globalization.Native.a', 'libSystem.IO.Compression.Native.a')]
