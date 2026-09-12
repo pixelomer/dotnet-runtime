@@ -141,7 +141,7 @@ archives = [
     '_deps/brotli-build/libbrotlidec.a',
     '_deps/brotli-build/libbrotlicommon.a',
 ]
-icu = Path(os.environ['ICU_NX_INSTALL_DIR'])
+icu = Path(os.environ.get('ICU_NX_INSTALL_DIR', str(repo/'artifacts/horizon/icu')))
 if args.probe == 'sockets':
     objects.append('-Wl,--wrap=poll')
 objects += ['-Wl,--wrap=' + symbol for symbol in args.wrap_symbol]
