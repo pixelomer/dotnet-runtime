@@ -288,3 +288,13 @@ registration. Use source-built integration inputs for the same target SDK/ABI.
 Choose dedicated generated output and SD deployment directories, keep inputs
 outside the helper's replaced subdirectories, deploy all generated managed
 files and preserve existing files/logs as described above.
+
+
+For native failure diagnostics, `--wrap-symbol NAME` links a reviewed
+`__wrap_NAME` implementation supplied through `--native-object`. Names use the
+same restricted identifier validation as exported symbols. The build manifest
+records the selected wrappers; default integration behavior is unchanged.
+Supply optional wrapper objects from integration source built with the same
+target SDK and ABI. Diagnostic wrappers should forward successful and failing
+calls unchanged when they are intended only to observe behavior; --wrap-symbol
+itself does not enforce that property.
