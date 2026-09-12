@@ -2,10 +2,10 @@
 
 This integration probe calls the CoreCLR embedding APIs and statically links
 the production VM, RyuJIT, GC and PAL. Follow the
-[thread probe](../threads/README.md) for devkitPro/ICU prerequisites, the pinned
-libnx source, SDK staging and CoreCLR cross-configuration.
-Export `ICU_NX_INSTALL_DIR` to the source-built ICU installation. The host's QCall checker
-requires dnfile and pyelftools; the IL-format checker requires pefile. Use Python 3.11 or newer and install them into
+[source-build guide](../../../../../../eng/libnx/README.md) for Linux host and
+devkitPro prerequisites, the pinned libnx SDK overlay, ICU and matching runtime
+inputs. Source eng/libnx/env.sh after the build to select its SDK and ICU. The host's QCall checker
+requires dnfile and pyelftools; the IL-format checker requires pefile. Use Python 3.12 or newer and install them into
 a local Python environment
 before invoking the helper. From the runtime root:
 
@@ -13,9 +13,8 @@ before invoking the helper. From the runtime root:
 python3 -m venv artifacts/qcall-python
 . artifacts/qcall-python/bin/activate
 python3 -m pip install dnfile pyelftools pefile
-./build.sh clr.corelib -os libnx -arch arm64 -c Release /p:PublicSign=true
-cmake --build artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe \
-  --target coreclr_static -- -j6
+python3 eng/libnx/build.py --flavor coreclr
+source eng/libnx/env.sh
 python3 src/coreclr/pal/tests/libnx/host/build.py
 ```
 

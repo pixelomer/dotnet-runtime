@@ -39,7 +39,7 @@ dkp = Path(os.environ.get('DEVKITPRO', '/opt/devkitpro'))
 asm = subprocess.check_output([str(dkp/'devkitA64/bin/aarch64-none-elf-objdump'), '-dr', str(obj)], text=True)
 if re.search(r'\btpidr_el0\b|R_AARCH64_TLS', asm, re.I): raise SystemExit('Linux inline TLS remains')
 build = repo/'artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe'
-icu = Path(os.environ['ICU_NX_INSTALL_DIR'])
+icu = Path(os.environ.get('ICU_NX_INSTALL_DIR', str(repo/'artifacts/horizon/icu')))
 subprocess.run(['python3', str(here.parent.parent/'create-linker-script.py'), str(out/'switch.ld')], check=True)
 specs = (libnx/'switch.specs').read_text()
 anchor = '-T %:getenv(DEVKITPRO /libnx/switch.ld)'

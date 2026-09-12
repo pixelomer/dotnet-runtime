@@ -48,6 +48,9 @@ patch. The SDK overlay and generated outputs are updated in place. Back up
 outputs before rebuilding if they are needed. Generated environment/build
 manifests describe that build and are not external prerequisites.
 
+Source `eng/libnx/env.sh` after a successful build to select its toolchain and
+ICU for application/probe linking.
+
 Outputs stay under `artifacts/`. `artifacts/horizon/environment.json` records
 the SDK overlay and ICU paths for integration tools. `--dependencies-only`
 builds just the native prerequisites. `--source-mirrors FILE` optionally maps
