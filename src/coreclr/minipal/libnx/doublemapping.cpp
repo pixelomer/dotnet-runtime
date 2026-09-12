@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "minipal.h"
@@ -11,6 +12,8 @@ extern "C" {
 #include <switch/arm/cache.h>
 #include <switch/result.h>
 }
+
+extern "C" void LibnxRuntimeDiagnostic(const char*) __attribute__((weak));
 
 namespace {
 constexpr size_t Page = 4096;
@@ -28,6 +31,7 @@ struct Region {
     Region* next;
     uintptr_t base;
     size_t size, offset;
+    void* backing;
     Chunk* chunks;
     View* views;
 };
@@ -73,20 +77,19 @@ void DestroyChunk(Chunk* c) {
     if (c->primaryMapped)
         Require(svcUnmapProcessCodeMemory(c->handle, c->primary, reinterpret_cast<uintptr_t>(c->backing), c->size));
     // The process handle is borrowed from libnx's environment, not ours to close.
-    free(c->backing); free(c);
+    free(c);
 }
-Chunk* CreateChunk(Mapper* m, uintptr_t primary, size_t size, bool executable) {
+Chunk* CreateChunk(Region* r, uintptr_t primary, size_t size, bool executable) {
     Chunk* c = static_cast<Chunk*>(calloc(1, sizeof(Chunk)));
     if (!c) return nullptr;
     c->primary = primary;
     c->size = size; c->executable = executable; c->handle = INVALID_HANDLE;
-    c->backing = aligned_alloc(Page, size);
-    if (!c->backing) { free(c); return nullptr; }
+    c->backing = static_cast<unsigned char*>(r->backing) + (primary - r->base);
     c->handle = envGetOwnProcessHandle();
     memset(c->backing, 0, size);
     armDCacheFlush(c->backing, size);
     Result rc = svcMapProcessCodeMemory(c->handle, primary, reinterpret_cast<uintptr_t>(c->backing), size);
-    if (R_FAILED(rc)) { free(c->backing); free(c); return nullptr; }
+    if (R_FAILED(rc)) { free(c); return nullptr; }
     c->primaryMapped = true;
     rc = svcSetProcessMemoryPermission(c->handle, primary, size, executable ? Perm_Rx : Perm_Rw);
     if (R_FAILED(rc)) { DestroyChunk(c); return nullptr; }
@@ -179,6 +182,16 @@ void* VMToOSInterface::CommitDoubleMappedMemory(void* address, size_t size, bool
     if (!r) return nullptr;
     for (Chunk* c = r->chunks; c; c = c->next)
         if (Overlaps(start, size, c->primary, c->size) && c->executable != executable) return nullptr;
+    // Independent page-sized malloc allocations interleave allocator headers
+    // and metadata with mapped-away source pages. Thousands of JIT commits can
+    // exhaust Horizon's shared memory-block descriptors even with ample heap.
+    // A reservation owns contiguous native backing, allocated on first commit;
+    // only requested chunks become mapped/accessible in the primary arena.
+    // Adjacent source and destination permissions can then coalesce in Horizon.
+    if (!r->backing) {
+        r->backing = aligned_alloc(Page, r->size);
+        if (!r->backing) return nullptr;
+    }
     Chunk* pending = nullptr;
     uintptr_t end = start + size;
     for (uintptr_t current = start; current < end;) {
@@ -187,7 +200,7 @@ void* VMToOSInterface::CommitDoubleMappedMemory(void* address, size_t size, bool
         uintptr_t next = end;
         for (Chunk* existing = r->chunks; existing; existing = existing->next)
             if (existing->primary > current && existing->primary < next) next = existing->primary;
-        c = CreateChunk(m, current, next - current, executable);
+        c = CreateChunk(r, current, next - current, executable);
         if (!c) {
             while (pending) { Chunk* old = pending; pending = pending->next; DestroyChunk(old); }
             return nullptr;
@@ -198,19 +211,44 @@ void* VMToOSInterface::CommitDoubleMappedMemory(void* address, size_t size, bool
     return address;
 }
 void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, size_t size) {
+    auto fail = [&](const char* reason, uintptr_t detail, unsigned result) -> void* {
+        if (LibnxRuntimeDiagnostic) {
+            char message[256];
+            snprintf(message, sizeof(message), "DoubleMapRW fail=%s rx=%p offset=%zu size=%zu detail=%llx result=%x",
+                reason, address, offset, size, (unsigned long long)detail, result);
+            LibnxRuntimeDiagnostic(message);
+            uint64_t resourceTotal=0, resourceUsed=0, memoryUsed=0, memoryTotal=0;
+            Result rt=svcGetInfo(&resourceTotal, InfoType_SystemResourceSizeTotal, CUR_PROCESS_HANDLE, 0);
+            Result ru=svcGetInfo(&resourceUsed, InfoType_SystemResourceSizeUsed, CUR_PROCESS_HANDLE, 0);
+            svcGetInfo(&memoryUsed, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+            svcGetInfo(&memoryTotal, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+            size_t regions=0, chunks=0, views=0, reserved=0, committed=0;
+            for (Mapper* mapper=mappers;mapper;mapper=mapper->next)
+                for (Region* region=mapper->regions;region;region=region->next) {
+                    ++regions;reserved+=region->size;
+                    for (Chunk* chunk=region->chunks;chunk;chunk=chunk->next) {++chunks;committed+=chunk->size;}
+                    for (View* view=region->views;view;view=view->next) ++views;
+                }
+            snprintf(message, sizeof(message), "DoubleMapRW resources used=%llu total=%llu results=%x/%x memory=%llu/%llu regions=%zu chunks=%zu views=%zu reserved=%zu committed=%zu",
+                (unsigned long long)resourceUsed,(unsigned long long)resourceTotal,ru,rt,
+                (unsigned long long)memoryUsed,(unsigned long long)memoryTotal,regions,chunks,views,reserved,committed);
+            LibnxRuntimeDiagnostic(message);
+        }
+        return nullptr;
+    };
     Lock lock;
     uintptr_t start = reinterpret_cast<uintptr_t>(address);
     Mapper* m = nullptr; Region* r = FindRegion(start, size, &m);
-    if (!r || m != handle || offset != r->offset + (start - r->base)) return nullptr;
+    if (!r || m != handle || offset != r->offset + (start - r->base)) return fail("region", reinterpret_cast<uintptr_t>(r), 0);
     // The API asks for committed RX memory. A view spanning holes or RW data
     // is invalid; ownership is checked before asking Horizon to map it.
     for (uintptr_t current = start; current < start + size;) {
         Chunk* c = FindChunk(r, current);
-        if (!c || !c->executable || c->references == SIZE_MAX) return nullptr;
+        if (!c || !c->executable || c->references == SIZE_MAX) return fail(!c ? "hole" : !c->executable ? "non-executable" : "reference-overflow", current, 0);
         current = c->primary + c->size;
     }
     View* view = static_cast<View*>(calloc(1, sizeof(View)));
-    if (!view) return nullptr;
+    if (!view) return fail("view-allocation", 0, 0);
     // CoreCLR identifies writer blocks by address containment. Each request
     // must therefore own a disjoint virtual view, including requests for the
     // same or overlapping RX bytes (as with separate Unix mmap calls).
@@ -225,7 +263,7 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
                     moved = true;
                 }
         if (writable - m->writable > Capacity || size > Capacity - (writable - m->writable)) {
-            free(view); return nullptr;
+            free(view); return fail("view-arena", writable, 0);
         }
     } while (moved);
     uintptr_t current = start;
@@ -242,7 +280,7 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
                 Require(svcUnmapProcessMemory(reinterpret_cast<void*>(writable + undo - start), prior->handle, undo, priorBytes));
                 undo += priorBytes;
             }
-            free(view); return nullptr;
+            free(view); return fail("svcMapProcessMemory", current, rc);
         }
         current += bytes;
     }
@@ -289,7 +327,7 @@ bool VMToOSInterface::ReleaseDoubleMappedMemory(void* handle, void* address, siz
     Region* r = *link;
     if (!r || r->size != size || r->offset != offset || r->views) return false;
     while (r->chunks) { Chunk* c = r->chunks; r->chunks = c->next; DestroyChunk(c); }
-    *link = r->next; free(r);
+    *link = r->next; free(r->backing); free(r);
     MaybeDestroyMapper(m);
     return true;
 }

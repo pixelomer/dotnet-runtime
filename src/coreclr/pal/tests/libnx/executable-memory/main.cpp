@@ -183,6 +183,27 @@ int main() {
         check(VM::ReleaseDoubleMappedMemory(mapper, p, 0, 4096), "last release retires closed mapper");
         fprintf(output, "ROUND %u checks=%u native_used=%zu\n", round, checks.load(), mallinfo().uordblks);
     }
+    // Realistic JIT commit density: many independent page commitments within
+    // one reservation, with writable aliases crossing their boundaries.
+    void* denseMapper=nullptr; size_t denseCapacity=0;
+    check(VM::CreateDoubleMemoryMapper(&denseMapper,&denseCapacity), "dense mapper");
+    constexpr size_t DensePages=2048, DenseBytes=DensePages*4096;
+    auto dense=static_cast<unsigned char*>(VM::ReserveDoubleMappedMemory(denseMapper,0,DenseBytes,nullptr,nullptr));
+    check(dense!=nullptr,"dense reservation");
+    for (size_t i=0;i<DensePages;++i)
+        check(VM::CommitDoubleMappedMemory(dense+i*4096,4096,true)==dense+i*4096,"dense page commitment");
+    for (size_t i=0;i<DensePages;i+=2) {
+        void* writer=VM::GetRWMapping(denseMapper,dense+i*4096,i*4096,8192);
+        check(writer!=nullptr,"dense crossing writer");
+        emit(writer,123);emit(static_cast<unsigned char*>(writer)+4096,456);
+        check(VM::ReleaseRWMapping(writer,8192),"dense writer retirement");
+        check(reinterpret_cast<Function>(dense+i*4096)()==123 &&
+            reinterpret_cast<Function>(dense+(i+1)*4096)()==456,"dense publication");
+    }
+    check(VM::ReleaseDoubleMappedMemory(denseMapper,dense,0,DenseBytes),"dense retirement");
+    check(permission(dense)==Perm_None,"dense retired protection");
+    VM::DestroyDoubleMemoryMapper(denseMapper);
+    fprintf(output,"DENSE pages=%zu bytes=%zu complete\n",DensePages,DenseBytes);
     fprintf(output, "PASS checks=%u lifetimes=2048 threads=32\n", checks.load());
     fclose(output); return 0;
 }

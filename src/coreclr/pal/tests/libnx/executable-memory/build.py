@@ -14,6 +14,7 @@ source = Path(__file__).resolve().parent
 repo = source.parents[5]
 parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
+parser.add_argument('--output',type=Path,help='Preserve controls in separate build directories')
 args = parser.parse_args()
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
@@ -26,7 +27,10 @@ for line in flags_file.read_text().splitlines():
         flags[name] = shlex.split(value)
 compiler = Path(os.environ.get('DEVKITA64', '/opt/devkitpro/devkitA64')) / 'bin/aarch64-none-elf-g++'
 devkitpro = Path(os.environ.get('DEVKITPRO', '/opt/devkitpro'))
-output = repo / 'artifacts/libnx-coreclr-exec'
+libnx_root=devkitpro/'libnx'
+for line in (build/'CMakeCache.txt').read_text().splitlines():
+    if line.startswith('LIBNX_ROOT:PATH='):libnx_root=Path(line.split('=',1)[1])
+output = args.output.resolve() if args.output else repo / 'artifacts/libnx-coreclr-exec'
 output.mkdir(parents=True, exist_ok=True)
 mini_flags = {}
 for line in (build / "minipal/Unix/CMakeFiles/coreclrminipal_objects.dir/flags.make").read_text().splitlines():
@@ -46,11 +50,11 @@ for unit in [source / 'main.cpp', repo / 'src/coreclr/minipal/libnx/doublemappin
     objects.append(str(obj))
 target = output / 'coreclr-exec-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
-                '-specs=' + str(devkitpro / 'libnx/switch.specs'), '-g', '-Wl,--gc-sections',
+                '-specs=' + str(libnx_root / 'switch.specs'), '-g', '-Wl,--gc-sections',
                 '-Wl,--wrap=svcMapProcessCodeMemory', '-Wl,--wrap=svcMapProcessMemory',
                 '-Wl,--wrap=svcSetProcessMemoryPermission',
                 '-Wl,-Map,' + str(target.with_suffix('.map')), *objects,
-                '-L' + str(devkitpro / 'libnx/lib'), '-lnx', '-o', str(target.with_suffix('.elf'))], check=True)
+                '-L' + str(libnx_root / 'lib'), '-lnx', '-o', str(target.with_suffix('.elf'))], check=True)
 subprocess.run([str(devkitpro / 'tools/bin/nacptool'), '--create', 'CoreCLR executable memory',
                 'Runtime research', '1.0.0', str(target.with_suffix('.nacp'))], check=True)
 subprocess.run([str(devkitpro / 'tools/bin/elf2nro'), str(target.with_suffix('.elf')),

@@ -33,12 +33,14 @@ A mapper closed with live allocations is retired after their final release.
 The existing CoreCLR allocator, loader heaps and JIT remain unchanged. The new
 VMToOSInterface implementation uses public libnx process-memory SVCs with the
 actual own-process handle supplied by the loader. Each mapper owns two 512 MiB
-virtual arenas; physical backing is allocated only on commit. Logical offsets
+virtual arenas; native backing is allocated per reservation on its first commitment. Only
+requested pages are mapped in the primary arena. Logical offsets
 cannot overlap live allocations. Mandatory ranges and exact placement are
 honored **within the owned primary arena**; other addresses fail. This is a
 bounded allocator, not general fixed mmap support.
 
-Each fresh commit run owns aligned backing mapped through MapProcessCodeMemory
+Each reservation owns contiguous aligned backing; fresh commit runs map their
+corresponding slices through MapProcessCodeMemory
 and protected RX or RW through SetProcessMemoryPermission. Writable subviews
 use MapProcessMemory against the actual RX mapping. Each request owns a
 disjoint writer address range and retains its source chunks, including requests
@@ -64,3 +66,27 @@ common view of software reservations owned by other platform components.
 Original adapter/test code uses official .NET and libnx 4.12 APIs. The public
 libnx implementation and Atmosphere 1.11.2 KCodeMemory/slab/process-memory SVC code informed behavior
 and ownership review; Atmosphere GPL code is not copied into this source.
+
+## Reservation backing and dense commitments
+
+Contiguous backing keeps allocator metadata out of independently mapped source
+pages. A reservation allocates all its native backing on first commitment,
+including bytes not yet committed in the primary arena. Budget native memory
+for the reservation size, not only the accessible chunks. Each mapper's
+reservation offsets remain bounded by its 512 MiB capacity.
+
+The dense workload commits 2,048 independent 4 KiB pages in one reservation,
+writes emitted functions through views crossing chunk boundaries, executes
+them after writer retirement and checks inaccessible addresses after release.
+These are workload dimensions, not captured performance results.
+
+An optional LibnxRuntimeDiagnostic callback receives RW-map failures with
+region/chunk/view counts and native process/resource counters. Those counters
+describe different memory scopes; process-used bytes alone do not identify
+native allocator exhaustion.
+
+Use --output to select a dedicated generated directory; rebuilding replaces
+its objects and NRO/ELF/map/NACP files. The helper takes LIBNX_ROOT from the
+selected CMake cache for both compile configuration and link inputs.
+Follow the [thread guide](../threads/README.md) to stage the pinned SDK and
+configure coreclr-probe consistently.
