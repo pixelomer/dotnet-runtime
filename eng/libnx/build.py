@@ -99,7 +99,8 @@ def prepare(a):
         stamp.write_text(json.dumps(identity, indent=2) + '\n')
     if not (icu / 'share/icu/77.1/icudt77l.dat').is_file():
         raise RuntimeError('ICU installation is missing globalization data')
-    env.update(ICU_NX_INSTALL_DIR=str(icu), CMAKE_BUILD_PARALLEL_LEVEL=str(a.jobs))
+    env.update(ICU_NX_INSTALL_DIR=str(icu), CMAKE_BUILD_PARALLEL_LEVEL=str(a.jobs),
+               DOTNET_PROCESSOR_COUNT=str(a.jobs))
     (out / 'environment.json').write_text(json.dumps({k: env[k] for k in
         ['DEVKITPRO', 'DEVKITA64', 'ROOTFS_DIR', 'ICU_NX_INSTALL_DIR']}, indent=2) + '\n')
     return out, env
@@ -112,7 +113,7 @@ def build(a, out, env):
     cmake = '-DFEATURE_EVENT_TRACE=OFF -DFEATURE_PERFTRACING=OFF -DLIBNX_ROOT=' + env['DEVKITPRO'] + '/libnx'
     if a.flavor == 'coreclr':
         if major < 10: raise RuntimeError('CoreCLR requires the Horizon .NET10 branch')
-        run(['bash', ROOT / 'src/coreclr/build-runtime.sh', 'arm64', 'release', 'cross', 'libnx',
+        run(['bash', ROOT / 'src/coreclr/build-runtime.sh', 'arm64', 'release', 'cross', '-os', 'libnx',
              '-configureonly', '-subdir', 'coreclr-probe', '-cmakeargs', cmake], cwd=ROOT, env=env)
         native = ROOT / 'artifacts/obj/coreclr/libnx.arm64.Release/coreclr-probe'
         run(['cmake', '--build', native, '--target', 'coreclr_static', '--parallel', a.jobs], env=env)
