@@ -127,8 +127,6 @@ def build(a, out, env):
             if sockets.exists(): shutil.rmtree(sockets)
             run([sys.executable, ROOT / 'src/coreclr/nativeaot/Runtime/libnx/build-sockets.py', '--output', sockets], cwd=ROOT, env=env)
     else:
-        run([ROOT / 'build.sh', '-s', 'mono.runtime+mono.corelib+libs.native+libs.sfx', *common,
-             '/p:MonoEnableLLVMRuntime=' + str(a.llvm).lower()], cwd=ROOT, env=env)
         if a.llvm:
             host_env = env | {'ROOTFS_DIR': ''}
             run([ROOT / 'dotnet.sh', 'msbuild', 'src/mono/llvm/llvm-init.proj', '-restore', '-t:Build',
@@ -136,10 +134,13 @@ def build(a, out, env):
                  '/p:BuildArchitecture=x64', '/p:AotHostArchitecture=x64', '/p:AotHostOS=linux'], cwd=ROOT, env=host_env)
             libclang = ROOT / 'artifacts/obj/mono/linux.x64.Release/llvm/x64/lib/libclang.so'
             if not libclang.is_file(): raise RuntimeError('Pinned LLVM libclang is missing')
+            run([ROOT / 'build.sh', '-s', 'mono.runtime+mono.corelib+libs.native+libs.sfx', *common,
+                 '/p:MonoEnableLLVMRuntime=true'], cwd=ROOT, env=env)
             run([ROOT / 'build.sh', '-s', 'mono.aotcross', '-c', 'Release',
                  '/p:MonoGenerateOffsetsOSGroups=libnx', '/p:MonoLibClang=' + str(libclang),
                  '/p:MonoEnableLLVMRuntime=true'], cwd=ROOT, env=env)
         else:
+            run([ROOT / 'build.sh', '-s', 'mono.runtime+mono.corelib+libs.native+libs.sfx', *common], cwd=ROOT, env=env)
             run([ROOT / 'build.sh', '-s', 'mono.aotcross', '-c', 'Release', '/p:MonoGenerateOffsetsOSGroups=libnx'], cwd=ROOT, env=env)
         run([ROOT / 'build.sh', '-s', 'mono.aotcross', '-c', 'Release', '/p:AotHostArchitecture=x64',
              '/p:AotHostOS=linux', '/p:MonoCrossAOTTargetOS=libnx', '/p:SkipMonoCrossJitConfigure=true',
@@ -150,6 +151,8 @@ def build(a, out, env):
         if a.llvm and not __import__('re').search(r'LLVM:\s+yes', information):
             raise RuntimeError('Compiler does not have an active LLVM backend')
         print(information)
+        run([ROOT / 'dotnet.sh', 'build', ROOT / 'src/tools/illink/src/linker/Mono.Linker.csproj',
+             '-c', 'Release', '/p:PublicSign=true'], cwd=ROOT, env=env | {'ROOTFS_DIR': ''})
     record = {'flavor': a.flavor, 'llvm': a.llvm, 'host_sdk': version,
               'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
               'environment_file': 'environment.json'}
