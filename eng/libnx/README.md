@@ -41,6 +41,9 @@ They do not install over system packages. Re-running reuses matching downloads
 and incremental runtime outputs. A dependency checkout with local changes or a
 different commit is rejected rather than reset.
 
+Source `eng/libnx/env.sh` after a successful build to select its toolchain and
+ICU for application/probe linking.
+
 Outputs stay under `artifacts/`. `artifacts/horizon/environment.json` records
 the SDK overlay and ICU paths for integration tools. `--dependencies-only`
 builds just the native prerequisites. `--source-mirrors FILE` optionally maps
