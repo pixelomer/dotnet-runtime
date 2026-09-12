@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include "minipal.h"
 #include "doublemapping.h"
 extern "C" {
@@ -18,6 +19,44 @@ extern "C" void LibnxRuntimeDiagnostic(const char*) __attribute__((weak));
 namespace {
 constexpr size_t Page = 4096;
 constexpr size_t Capacity = size_t(512) << 20;
+void DiagnoseMemoryBlocks() {
+    if (!LibnxRuntimeDiagnostic) return;
+    // Kernel process-used bytes include the preallocated newlib heap. Report
+    // allocator use separately, and count actual mappings by type/permission
+    // to distinguish mapping-descriptor pressure from malloc exhaustion.
+    auto heap = mallinfo();
+    char text[200];
+    snprintf(text, sizeof(text), "NativeHeap allocated=%zu free=%zu",
+        size_t(heap.uordblks), size_t(heap.fordblks));
+    LibnxRuntimeDiagnostic(text);
+    size_t counts[32][8] = {}, bytes[32][8] = {};
+    uintptr_t address = 0;
+    size_t total = 0;
+    Result result = 0;
+    while (total < 100000) {
+        MemoryInfo info = {}; u32 pageInfo = 0;
+        result = svcQueryMemory(&info, &pageInfo, address);
+        if (R_FAILED(result)) break;
+        ++total;
+        unsigned type = info.type & 0xff, permission = info.perm & 7;
+        if (type < 32) {
+            ++counts[type][permission];
+            if (type != 0) bytes[type][permission] += info.size;
+        }
+        uintptr_t end = info.addr + info.size;
+        if (!info.size || end <= address) break;
+        address = end;
+    }
+    snprintf(text, sizeof(text), "KernelMap total=%zu query_result=%x", total, result);
+    LibnxRuntimeDiagnostic(text);
+    for (unsigned type = 0; type < 32; ++type)
+        for (unsigned permission = 0; permission < 8; ++permission)
+            if (counts[type][permission]) {
+                snprintf(text, sizeof(text), "KernelMap type=%u permission=%u blocks=%zu bytes=%zu",
+                    type, permission, counts[type][permission], bytes[type][permission]);
+                LibnxRuntimeDiagnostic(text);
+            }
+}
 struct Chunk {
     Chunk* next;
     uintptr_t primary;
@@ -236,6 +275,7 @@ void* VMToOSInterface::GetRWMapping(void* handle, void* address, size_t offset, 
                 (unsigned long long)resourceUsed,(unsigned long long)resourceTotal,ru,rt,
                 (unsigned long long)memoryUsed,(unsigned long long)memoryTotal,regions,chunks,views,reserved,committed);
             LibnxRuntimeDiagnostic(message);
+            DiagnoseMemoryBlocks();
         }
         return nullptr;
     };
