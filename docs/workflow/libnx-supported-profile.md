@@ -91,3 +91,11 @@ Retain the .NET source licenses and the vendored LLVM unwinder's notices.
 The adapter uses public libnx/devkitPro interfaces; the
 [CoreCLR guide](libnx-coreclr.md) links the public API and code-memory references.
 Those references do not change the licenses of the implementation sources.
+
+## Open filesystem semantic gap: replacement rename
+SystemNative_Rename forwards to rename; libnx's filesystem adapter forwards
+file renames to fsFsRenameFile without a replacement implementation.
+Unix CoreLib File.Move(overwrite:true) and File.Replace rely on replacement
+semantics. Do not assume atomic replacement support for these paths on Horizon.
+They require separate platform adaptation and compatibility review.
+Silently unlinking the destination first would not supply an atomic guarantee.

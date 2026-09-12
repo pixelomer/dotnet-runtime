@@ -84,3 +84,10 @@ and logs before they are replaced. The path options change host deployment
 and ordinary logs, not every path embedded in built-in managed workloads or
 specialized tracing/progress output. Use their documented paths, or supply
 integration source that matches the selected deployment.
+
+Repeated --native-library arguments add existing .a archives to the runtime
+link group, allowing circular archive references to resolve. Build these
+optional integration libraries from their sources with the same target SDK
+and ABI; they are distinct from directly linked --native-object inputs.
+The build manifest records the selected archives. Default probe linkage is
+unchanged. Static linkage does not implement arbitrary native dlopen.

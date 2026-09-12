@@ -42,6 +42,7 @@ parser.add_argument('--jit-trace', action='store_true')
 parser.add_argument('--managed-source', type=Path, help='Original integration probe source to compile in place of the built-in probe')
 parser.add_argument('--managed-reference', type=Path, action='append', default=[], help='Additional IL-only reference to deploy')
 parser.add_argument('--native-object', type=Path, action='append', default=[], help='Additional reviewed native integration object')
+parser.add_argument('--native-library', type=Path, action='append', default=[], help='Additional static archive in the runtime dependency link group')
 parser.add_argument('--export-symbol', action='append', default=[], help='Retain and export an explicit host integration entry point')
 parser.add_argument('--managed-directory', default='/switch/coreclr-probe', help='Absolute SD path without a device prefix')
 parser.add_argument('--log-prefix', default='/switch/coreclr-host', help='Absolute SD log prefix without a device prefix')
@@ -57,6 +58,8 @@ for path in (args.managed_directory, args.log_prefix):
         parser.error('Integration paths must be plain absolute paths under /switch')
 for symbol in args.export_symbol:
     if not symbol or not all(c.isalnum() or c == '_' for c in symbol): parser.error('Invalid export symbol')
+for archive in args.native_library:
+    if not archive.is_file() or archive.suffix != '.a': parser.error('Native libraries must be existing static archives')
 
 if args.probe == 'r2r' and (args.r2r_input is None or not args.r2r_input.is_file()):
     parser.error('--r2r-input is required for the r2r probe')
@@ -124,7 +127,7 @@ archives = [
 icu = Path(os.environ['ICU_NX_INSTALL_DIR'])
 if args.probe == 'sockets':
     objects.append('-Wl,--wrap=poll')
-objects += ['-Wl,--start-group', *[str(build / p) for p in archives], *[str(icu/'lib'/p) for p in ['libicui18n.a', 'libicuuc.a', 'libicudata.a']], '-Wl,--end-group']
+objects += ['-Wl,--start-group', *[str(build / p) for p in archives], *[str(icu/'lib'/p) for p in ['libicui18n.a', 'libicuuc.a', 'libicudata.a']], *[str(p.resolve()) for p in args.native_library], '-Wl,--end-group']
 target = output / 'coreclr-host-probe'
 subprocess.run([str(compiler), '-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE',
                 '-specs=' + str(libnx_root / 'switch.specs'), '-g', '-Wl,--gc-sections',
@@ -200,6 +203,7 @@ for path in [Path(__file__), validator, *units, managed_source]:
 manifest = {
     'managed_directory': args.managed_directory, 'log_prefix': args.log_prefix, 'export_symbols': args.export_symbol,
     'native_objects': {str(p.resolve()): digest(p) for p in args.native_object},
+    'native_libraries': {str(p.resolve()): digest(p) for p in args.native_library},
     'source_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
     'probe': args.probe, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
     'source_sha256': {str(path.relative_to(repo) if path.is_relative_to(repo) else path): digest(path) for path in [Path(__file__), validator, *units, managed_source]},
