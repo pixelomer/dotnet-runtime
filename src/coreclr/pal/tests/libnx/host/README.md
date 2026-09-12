@@ -48,7 +48,7 @@ Use `--probe stress` to compile Stress.cs instead of the basic Probe.cs:
 python3 src/coreclr/pal/tests/libnx/host/build.py --probe stress
 ```
 
-All probe selections produce Probe.dll in the selected managed output directory. Copy
+Built-in probe selections produce Probe.dll in the selected managed output directory. Copy
 the newly generated managed files to the documented SD destination whenever
 the selection or managed inputs change; rebuilding does not deploy them.
 Compilation is deterministic.
@@ -85,7 +85,7 @@ The native link also requires the three source-built Brotli archives, included
 by the compression target's existing dependencies. The helper copies framework
 DLLs from `artifacts/bin/runtime/net10.0-libnx-Release-arm64` beside the selected
 CoreLib. Deploy that entire managed directory to the documented SD destination;
-the host builds its TPA list from deployed DLLs other than Probe.dll. Keep
+the host builds its TPA list from deployed DLLs other than the selected entry assembly (Probe.dll by default). Keep
 unrelated DLLs out of this probe-specific directory.
 
 The BCL workload covers Console, files/async I/O, timers/cancellation, reflection,
@@ -260,3 +260,31 @@ identity checks. Managed result 100 means those checks completed; loader
 rejection or another exception returns 110 with diagnostic output. This control
 does not declare foreign ReadyToRun loading supported. Do not bypass the normal
 deployment format checker to use it for application inputs.
+
+## Existing application entry points
+
+After the source CoreLib/framework builds described above, --probe bcl with
+--application-entry Application.dll and --managed-reference pointing to the
+caller's IL-only Application.dll deploys and executes that application directly.
+Supply its other managed dependencies with repeated --managed-reference inputs;
+keep them compatible with this checkout's framework. The entry must be a plain,
+non-reserved DLL basename, and --managed-source cannot be combined with it.
+
+No reflection launcher is inserted. The entry DLL is excluded from TPA,
+and the selected --managed-directory is passed as APP_CONTEXT_BASE_DIRECTORY.
+The host calls coreclr_execute_assembly with no application arguments.
+An optional native HostConfigureApplication function can set the application's
+working directory and environment before CLR initialization; a nonzero result
+aborts initialization.
+
+--watchdog-seconds accepts 0 through 3600. Zero disables the BCL host's timeout
+for interactive applications while retaining completion monitoring. The option
+does not change the separate suspension watchdog. Default probe behavior is
+retained when these options are absent.
+
+See the [embedding guide](../../../../../../docs/workflow/libnx-embedding-hooks.md)
+for optional native objects, static libraries, explicit exports and import
+registration. Use source-built integration inputs for the same target SDK/ABI.
+Choose dedicated generated output and SD deployment directories, keep inputs
+outside the helper's replaced subdirectories, deploy all generated managed
+files and preserve existing files/logs as described above.

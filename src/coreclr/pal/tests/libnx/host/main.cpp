@@ -11,6 +11,9 @@
 #ifndef HOST_MANAGED_DIR
 #define HOST_MANAGED_DIR "/switch/coreclr-probe"
 #endif
+#ifndef HOST_ENTRY_ASSEMBLY
+#define HOST_ENTRY_ASSEMBLY "Probe.dll"
+#endif
 #ifndef HOST_LOG_PREFIX
 #define HOST_LOG_PREFIX "/switch/coreclr-host"
 #endif
@@ -52,7 +55,9 @@ static void* SuspensionWatchdog(void*)
 #endif
 #ifdef HOST_BCL_PROBE
 static int bclComplete;
-#ifdef HOST_SOAK_PROBE
+#if defined(HOST_WATCHDOG_SECONDS)
+static constexpr uint64_t BclTimeoutSeconds = HOST_WATCHDOG_SECONDS;
+#elif defined(HOST_SOAK_PROBE)
 static constexpr uint64_t BclTimeoutSeconds = 240;
 #else
 static constexpr uint64_t BclTimeoutSeconds = 120;
@@ -62,7 +67,7 @@ static void* BclWatchdog(void*)
     uint64_t begin = armGetSystemTick();
     while (!__atomic_load_n(&bclComplete, __ATOMIC_ACQUIRE)) {
         // Do not acquire application or stdio locks after the deadline.
-        if (armTicksToNs(armGetSystemTick() - begin) >= BclTimeoutSeconds * 1000000000ULL) svcExitProcess();
+        if (BclTimeoutSeconds && armTicksToNs(armGetSystemTick() - begin) >= BclTimeoutSeconds * 1000000000ULL) svcExitProcess();
         svcSleepThread(10000000);
     }
     return nullptr;
@@ -125,6 +130,7 @@ extern "C" void HostFlushDiagnostics() { fflush(nullptr); }
 static void error_writer(const char* text) { fprintf(output, "CORECLR: %s\n", text); }
 // Optional integration object, registered through the ordinary embedding API.
 extern "C" void* HostResolvePInvoke(const char* library, const char* entry) __attribute__((weak));
+extern "C" int HostConfigureApplication() __attribute__((weak));
 int main(int argc, char** argv)
 {
     output = fopen("sdmc:" HOST_LOG_PREFIX "-probe.txt", "w");
@@ -175,6 +181,10 @@ int main(int argc, char** argv)
     // Request native R2R use; the Horizon VM must still enforce its IL/JIT ABI.
     setenv("DOTNET_ReadyToRun", "1", 1);
 #endif
+    if (HostConfigureApplication && HostConfigureApplication() != 0) {
+        fprintf(output, "FAIL application configuration\n");
+        return 1;
+    }
     coreclr_set_error_writer(error_writer);
     void* host = nullptr;
     unsigned domain = 0;
@@ -183,7 +193,7 @@ int main(int argc, char** argv)
     if (!assemblies) { fprintf(output, "FAIL missing managed deployment\n"); return 1; }
     while (dirent* entry = readdir(assemblies)) {
         size_t length = strlen(entry->d_name);
-        if (length < 4 || strcmp(entry->d_name + length - 4, ".dll") != 0 || strcmp(entry->d_name, "Probe.dll") == 0) continue;
+        if (length < 4 || strcmp(entry->d_name + length - 4, ".dll") != 0 || strcmp(entry->d_name, HOST_ENTRY_ASSEMBLY) == 0) continue;
         if (!platformAssemblies.empty()) platformAssemblies += ':';
         platformAssemblies += HOST_MANAGED_DIR "/";
         platformAssemblies += entry->d_name;
@@ -191,9 +201,16 @@ int main(int argc, char** argv)
     closedir(assemblies);
     char resolver[32];
     snprintf(resolver, sizeof(resolver), "%llu", (unsigned long long)reinterpret_cast<uintptr_t>(HostResolvePInvoke));
+#ifdef HOST_APPLICATION_ENTRY
+    const char* keys[] = {"APP_PATHS", "TRUSTED_PLATFORM_ASSEMBLIES", "System.Globalization.Invariant", "APP_CONTEXT_BASE_DIRECTORY", "PINVOKE_OVERRIDE"};
+    const char* values[] = {HOST_MANAGED_DIR, platformAssemblies.c_str(), "true", HOST_MANAGED_DIR "/", resolver};
+    int propertyCount = HostResolvePInvoke ? 5 : 4;
+#else
     const char* keys[] = {"APP_PATHS", "TRUSTED_PLATFORM_ASSEMBLIES", "System.Globalization.Invariant", "PINVOKE_OVERRIDE"};
     const char* values[] = {HOST_MANAGED_DIR, platformAssemblies.c_str(), "true", resolver};
-    int result = coreclr_initialize(argv[0], "Horizon CoreCLR probe", HostResolvePInvoke ? 4 : 3, keys, values, &host, &domain);
+    int propertyCount = HostResolvePInvoke ? 4 : 3;
+#endif
+    int result = coreclr_initialize(argv[0], "Horizon CoreCLR host", propertyCount, keys, values, &host, &domain);
     fprintf(output, "coreclr_initialize result=%08x host=%p domain=%u\n", result, host, domain);
     if (result < 0) HostDumpStackMap();
     if (result >= 0) {
@@ -216,6 +233,9 @@ int main(int argc, char** argv)
         // Also release the native waiter if managed startup returned early.
         __atomic_store_n(&suspensionControl[2], -1, __ATOMIC_RELEASE);
         pthread_join(watchdog, nullptr);
+#elif defined(HOST_APPLICATION_ENTRY)
+        fprintf(output, "APPLICATION_ENTRY " HOST_MANAGED_DIR "/" HOST_ENTRY_ASSEMBLY "\n");
+        result = coreclr_execute_assembly(host, domain, 0, nullptr, HOST_MANAGED_DIR "/" HOST_ENTRY_ASSEMBLY, &exit_code);
 #else
         result = coreclr_execute_assembly(host, domain, 1, arguments, HOST_MANAGED_DIR "/Probe.dll", &exit_code);
 #endif

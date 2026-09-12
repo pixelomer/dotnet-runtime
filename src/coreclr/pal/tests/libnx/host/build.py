@@ -39,6 +39,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--configuration', default='coreclr-probe')
 parser.add_argument('--output', type=Path, help='Keep a probe variant in a separate artifact directory')
 parser.add_argument('--jit-trace', action='store_true')
+parser.add_argument('--watchdog-seconds', type=int, help='Override integration watchdog; 0 disables it for interactive applications')
+parser.add_argument('--application-entry', help='Deploy and execute an existing IL-only entry DLL directly instead of compiling a probe')
 parser.add_argument('--managed-source', type=Path, help='Original integration probe source to compile in place of the built-in probe')
 parser.add_argument('--managed-reference', type=Path, action='append', default=[], help='Additional IL-only reference to deploy')
 parser.add_argument('--native-object', type=Path, action='append', default=[], help='Additional reviewed native integration object')
@@ -53,6 +55,16 @@ parser.add_argument('--dotnet-root', type=Path, help='Reuse an explicitly select
 parser.add_argument('--minopts', action='store_true', help='Exercise minimum-optimization JIT code generation')
 parser.add_argument('--probe', choices=['basic', 'stress', 'suspension', 'bcl', 'sockets', 'suspension-flows', 'soak', 'r2r'], default='basic')
 args = parser.parse_args()
+if args.watchdog_seconds is not None and not 0 <= args.watchdog_seconds <= 3600: parser.error("watchdog-seconds must be 0..3600")
+if args.application_entry:
+    if (not args.application_entry.endswith('.dll') or
+        not all(c.isascii() and (c.isalnum() or c in '._-') for c in args.application_entry) or
+        args.application_entry in ('Probe.dll', 'System.Private.CoreLib.dll')):
+        parser.error('application-entry must be a plain non-reserved DLL basename')
+    if args.managed_source or args.probe != 'bcl':
+        parser.error('application-entry requires --probe bcl and no managed-source')
+    if not any(p.name == args.application_entry and p.is_file() for p in args.managed_reference):
+        parser.error('application-entry must be supplied as a managed-reference')
 for path in (args.managed_directory, args.log_prefix):
     if not path.startswith('/switch/') or any(c in path for c in '\n\r"\\:') or '..' in Path(path).parts:
         parser.error('Integration paths must be plain absolute paths under /switch')
@@ -82,6 +94,10 @@ output = args.output.resolve() if args.output else repo / 'artifacts/libnx-corec
 output.mkdir(parents=True, exist_ok=True)
 compile_flags = flags['CXX_DEFINES'] + flags['CXX_INCLUDES'] + flags['CXX_FLAGS'] + ['-I' + str(repo/'src/coreclr/hosts/inc')]
 compile_flags += ['-DHOST_MANAGED_DIR="' + args.managed_directory + '"', '-DHOST_LOG_PREFIX="' + args.log_prefix + '"']
+if args.application_entry:
+    compile_flags += ['-DHOST_APPLICATION_ENTRY', '-DHOST_ENTRY_ASSEMBLY="' + args.application_entry + '"']
+if args.watchdog_seconds is not None:
+    compile_flags += ["-DHOST_WATCHDOG_SECONDS=" + str(args.watchdog_seconds)]
 if args.jit_trace:
     compile_flags += ["-DHOST_JIT_TRACE"]
 if args.probe in ('suspension', 'suspension-flows', 'soak'):
@@ -168,12 +184,13 @@ for assembly in args.managed_reference:
 if args.probe == 'r2r':
     shutil.copyfile(args.r2r_input, managed/'OwnedReadyToRun.dll')
 shutil.copyfile(corelib, managed / corelib.name)
-sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
-dotnet_root = args.dotnet_root.resolve() if args.dotnet_root else repo/'.dotnet'
-subprocess.run([str(dotnet_root/'dotnet'), str(dotnet_root/'sdk'/sdk/'Roslyn/bincore/csc.dll'),
-                '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
-                '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
-                str((args.managed_source.resolve() if args.managed_source else source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe]))], check=True)
+if not args.application_entry:
+    sdk = json.loads((repo/'global.json').read_text())['sdk']['version']
+    dotnet_root = args.dotnet_root.resolve() if args.dotnet_root else repo/'.dotnet'
+    subprocess.run([str(dotnet_root/'dotnet'), str(dotnet_root/'sdk'/sdk/'Roslyn/bincore/csc.dll'),
+                    '-nologo', '-noconfig', '-nostdlib+', '-deterministic+', '-unsafe+', '-target:exe', '-optimize+',
+                    '-r:' + str(corelib), *references, '-out:' + str(managed/'Probe.dll'),
+                    str((args.managed_source.resolve() if args.managed_source else source / {'basic': 'Probe.cs', 'stress': 'Stress.cs', 'suspension': 'Suspension.cs', 'bcl': 'BclProbe.cs', 'sockets': 'SocketProbe.cs', 'suspension-flows': 'SuspensionFlows.cs', 'soak': 'Soak.cs', 'r2r': 'ReadyToRunProbe.cs'}[args.probe]))], check=True)
 with (output/'qcall-validation.json').open('w') as result:
     subprocess.run([sys.executable, str(source/'validate-qcalls.py'), str(corelib),
                     str(target.with_suffix('.elf'))], stdout=result, check=True)
@@ -198,15 +215,16 @@ snapshot = output/'source-snapshot'
 if snapshot.exists():
     shutil.rmtree(snapshot)
 snapshot.mkdir()
-for path in [Path(__file__), validator, *units, managed_source]:
+source_inputs = [Path(__file__), validator, *units] + ([] if args.application_entry else [managed_source])
+for path in source_inputs:
     shutil.copyfile(path, snapshot/path.name)
 manifest = {
     'managed_directory': args.managed_directory, 'log_prefix': args.log_prefix, 'export_symbols': args.export_symbol,
     'native_objects': {str(p.resolve()): digest(p) for p in args.native_object},
     'native_libraries': {str(p.resolve()): digest(p) for p in args.native_library},
     'source_base': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
-    'probe': args.probe, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
-    'source_sha256': {str(path.relative_to(repo) if path.is_relative_to(repo) else path): digest(path) for path in [Path(__file__), validator, *units, managed_source]},
+    'probe': args.probe, 'application_entry': args.application_entry, 'watchdog_seconds': args.watchdog_seconds, 'jit_trace': args.jit_trace, 'minopts': args.minopts,
+    'source_sha256': {str(path.relative_to(repo) if path.is_relative_to(repo) else path): digest(path) for path in source_inputs},
     'corelib_input': str(corelib),
     'managed_sha256': {path.name: digest(path) for path in sorted(managed.glob('*.dll'))},
     'linked_input_sha256': linked_inputs,
