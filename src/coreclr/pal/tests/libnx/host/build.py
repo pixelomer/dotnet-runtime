@@ -79,7 +79,7 @@ if args.probe == 'r2r' and (args.r2r_input is None or not args.r2r_input.is_file
 build = repo / 'artifacts/obj/coreclr/libnx.arm64.Release' / args.configuration
 flags_file = build / 'pal/src/CMakeFiles/coreclrpal_objects.dir/flags.make'
 if not flags_file.is_file():
-    parser.error('Cross-configure CoreCLR first; see this script's docstring')
+    parser.error("Cross-configure CoreCLR first; see this script's docstring")
 flags = {}
 for line in flags_file.read_text().splitlines():
     if ' = ' in line:
