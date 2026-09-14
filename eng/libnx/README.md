@@ -1,5 +1,19 @@
 # .NET runtimes for Horizon
 
+> [!IMPORTANT]
+> AI assistance was heavily used for this project. Most of the work was done by
+> GPT-6 Astra. The produced code was not audited or verified by a human beyond
+> running it and confirming that it works as expected. Human maintainability or
+> readability was not a goal for this project.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 This fork supplies Mono, NativeAOT and CoreCLR/RyuJIT for Nintendo Switch
 homebrew. It uses devkitA64, public libnx APIs and the upstream .NET runtime.
 The SDK entry point is [pixelomer/dotnet-switch](https://github.com/pixelomer/dotnet-switch).
